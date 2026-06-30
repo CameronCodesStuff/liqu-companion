@@ -14,29 +14,20 @@ const zipInput = $('zipInput');
 const importStatus = $('importStatus');
 const outfitList = $('outfitList');
 
-// =============================================================================
-// Scene / renderer
-// =============================================================================
 const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(stage.clientWidth, stage.clientHeight);
 renderer.setClearColor(0x000000, 0);
-// Correct color pipeline for VRM/MToon materials. Without sRGB output the
-// character looks dim and slightly off-hue; ACES tone mapping + a slightly
-// >1 exposure keeps bright neon accents from clipping while lifting shadows.
+
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.15;
 stage.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.05, 50);
+const camera = new THREE.PerspectiveCamera(28, stage.clientWidth / stage.clientHeight, 0.05, 50);
 camera.position.set(0, 1.3, 3.2);
 
-// Neutral, fairly bright lighting. The earlier strongly-tinted cyan/pink
-// lights were recoloring the model's own textures (washing out skin, dimming
-// the outfit). A near-white key + soft fill shows the VRM's true colors; a
-// faint cool/warm rim only adds subtle separation without staining the model.
 scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 2.2));
 const key = new THREE.DirectionalLight(0xffffff, 1.6);
 key.position.set(1.0, 2.0, 2.5);
@@ -119,10 +110,7 @@ function loadModel(url) {
       resetPoseImmediate();
       populateOutfitList(vrm);
       applyExpression(currentExpression);
-      // Eyes: give the VRM lookAt system a target object we move toward the
-      // cursor each frame. This rotates the EYES independently of the head,
-      // which is what makes the gaze feel alive rather than the whole head
-      // swinging. Only some VRMs ship eye bones/lookAt; guarded accordingly.
+
       if (vrm.lookAt) {
         vrm.lookAt.target = lookAtTarget;
         if (!lookAtTarget.parent) scene.add(lookAtTarget);
@@ -140,15 +128,12 @@ function loadModel(url) {
 }
 
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = stage.clientWidth / stage.clientHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(stage.clientWidth, stage.clientHeight);
   if (currentVrm) frameCamera(currentVrm);
 });
 
-// =============================================================================
-// Character library
-// =============================================================================
 async function refreshCharacterList(selectId) {
   const list = (await window.companionAPI?.listCharacters?.()) || [];
   characterSelect.innerHTML = '';
@@ -262,28 +247,44 @@ dropZone.addEventListener('drop', (e) => {
   handleZipFile(e.dataTransfer.files && e.dataTransfer.files[0]);
 });
 
-// =============================================================================
-// Window dragging + edge snapping
-// =============================================================================
 const dragHandle = $('dragHandle');
 let dragging = false, lastX = 0, lastY = 0;
-dragHandle.addEventListener('mousedown', (e) => { dragging = true; lastX = e.screenX; lastY = e.screenY; });
+
+function beginDrag(e) {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  const rect = stage.getBoundingClientRect();
+  stage.style.bottom = 'auto';
+  stage.style.right = 'auto';
+  stage.style.left = rect.left + 'px';
+  stage.style.top = rect.top + 'px';
+}
+dragHandle.addEventListener('mousedown', beginDrag);
+
+let pressStartX = 0, pressStartY = 0, pressing = false, dragStarted = false;
+renderer.domElement.addEventListener('mousedown', (e) => {
+  pressing = true; dragStarted = false;
+  pressStartX = e.clientX; pressStartY = e.clientY;
+});
 window.addEventListener('mousemove', (e) => {
+  if (pressing && !dragStarted) {
+    if (Math.hypot(e.clientX - pressStartX, e.clientY - pressStartY) > 5) {
+      dragStarted = true;
+      beginDrag({ clientX: pressStartX, clientY: pressStartY });
+    }
+  }
   if (!dragging) return;
-  const dx = e.screenX - lastX, dy = e.screenY - lastY;
-  lastX = e.screenX; lastY = e.screenY;
-  window.companionAPI?.dragWindow(dx, dy);
-  pushDragVelocity(dx, dy); // drives the physics lean/wobble
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  stage.style.left = (parseFloat(stage.style.left) + dx) + 'px';
+  stage.style.top = (parseFloat(stage.style.top) + dy) + 'px';
+  pushDragVelocity(dx, dy);
 });
 window.addEventListener('mouseup', () => {
+  pressing = false;
   if (!dragging) return;
   dragging = false;
-  window.companionAPI?.dragEnd(); // snaps to nearest edge/corner if close enough
 });
 
-// =============================================================================
-// Settings: tabs, switches (single source of truth = the .on class), sliders
-// =============================================================================
 document.querySelectorAll('.tabBtn').forEach((btn) => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tabBtn').forEach((b) => b.classList.remove('active'));
@@ -297,7 +298,6 @@ $('gear').addEventListener('click', () => $('panel').classList.toggle('open'));
 $('quitBtn').addEventListener('click', () => window.companionAPI?.quit());
 $('panelClose').addEventListener('click', () => $('panel').classList.remove('open'));
 
-// ---- Drag the settings panel around by its header (within the window) ----
 (() => {
   const panel = $('panel');
   const header = $('panelHeader');
@@ -315,42 +315,29 @@ $('panelClose').addEventListener('click', () => $('panel').classList.remove('ope
   });
   window.addEventListener('mousemove', (e) => {
     if (!pdrag) return;
-    let nl = startLeft + (e.clientX - sx);
-    let nt = startTop + (e.clientY - sy);
-    // keep it on-screen
-    nl = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, nl));
-    nt = Math.max(0, Math.min(window.innerHeight - 40, nt));
-    panel.style.left = nl + 'px';
-    panel.style.top = nt + 'px';
+    panel.style.left = (startLeft + (e.clientX - sx)) + 'px';
+    panel.style.top = (startTop + (e.clientY - sy)) + 'px';
   });
   window.addEventListener('mouseup', () => { pdrag = false; });
 })();
 
-// ---------------------------------------------------------------------------
-// Click-through hover capture. When click-through is ON the whole window
-// ignores the mouse — which would trap you, unable to click the gear to turn
-// it back off. So whenever the cursor enters an interactive element (gear or
-// the open panel) we momentarily re-capture the mouse, and release it again on
-// leave. This keeps the desktop clickable "through" the character while the
-// settings UI itself stays usable.
-let clickThroughActive = false;
-const interactiveEls = [$('gear'), $('panel'), $('chatBar')];
+let charClickThrough = false;
+const interactiveEls = [$('gear'), $('panel'), $('chatBar'), $('dragHandle')];
 interactiveEls.forEach((el) => {
   el.addEventListener('mouseenter', () => {
-    if (clickThroughActive) window.companionAPI?.setIgnoreMouse(false);
+    window.companionAPI?.setIgnoreMouse(false);
   });
   el.addEventListener('mouseleave', () => {
-    if (clickThroughActive) window.companionAPI?.setIgnoreMouse(true);
+    window.companionAPI?.setIgnoreMouse(true);
   });
 });
+stage.addEventListener('mouseenter', () => {
+  if (!charClickThrough) window.companionAPI?.setIgnoreMouse(false);
+});
+stage.addEventListener('mouseleave', () => {
+  window.companionAPI?.setIgnoreMouse(true);
+});
 
-/**
- * A switch's ON/OFF state lives ONLY in its `.on` class — nothing is tracked
- * in a separate JS variable. Every click reads the class, flips it, then
- * fires the callback with the new boolean. This is the fix for switches
- * "breaking": the old version kept a closure variable that could desync from
- * the visible class state when toggled from two places (UI + IPC broadcast).
- */
 function bindSwitch(id, onToggle, persistKey) {
   const el = $(id);
   el.addEventListener('click', () => {
@@ -367,19 +354,13 @@ function bindSwitch(id, onToggle, persistKey) {
 
 const topSwitch = bindSwitch('toggleTop', (on) => window.companionAPI?.setAlwaysOnTop(on));
 const clickThroughSwitch = bindSwitch('toggleClickThrough', (on) => {
-  clickThroughActive = on;
-  window.companionAPI?.setClickThrough(on);
-  // re-capture immediately if the cursor is still over the panel so the user
-  // isn't locked out the instant they flip it on
-  if (on) window.companionAPI?.setIgnoreMouse(false);
-});
-// These two round-trip through the main process (it broadcasts the confirmed
-// value back), so the visible switch always reflects ground truth instead of
-// an optimistic guess that could drift out of sync.
+  charClickThrough = on;
+}, 'clickThrough');
+
 window.companionAPI?.onAlwaysOnTopChanged((v) => topSwitch.set(v));
-window.companionAPI?.onClickThroughChanged((v) => { clickThroughActive = v; clickThroughSwitch.set(v); });
 
 const chatterSwitch = bindSwitch('toggleChatter', null, 'chatterEnabled');
+const idleVoiceSwitch = bindSwitch('toggleIdleVoice', null, 'idleVoiceEnabled');
 const autoSleepSwitch = bindSwitch('toggleAutoSleep', null, 'autoSleep');
 const cpuWarnSwitch = bindSwitch('toggleCpuWarn', null, 'cpuWarnEnabled');
 const minimalSwitch = bindSwitch('toggleMinimal', (on) => {
@@ -394,20 +375,37 @@ const clipboardSwitch = bindSwitch('toggleClipboard', (on) => {
   showBubble(on ? 'Okay, I\'ll glance at your clipboard for context.' : 'Stopped watching your clipboard.');
 }, 'watchClipboard');
 
-// animation feature toggles (mutate the `features` flags consumed by the loop)
 bindSwitch('toggleEyeTracking', (on) => { features.eyeTracking = on; }, 'eyeTracking');
 bindSwitch('toggleIdleVariation', (on) => { features.idleVariation = on; }, 'idleVariation');
 bindSwitch('togglePhysics', (on) => { features.physicsReactions = on; }, 'physicsReactions');
-const walkSwitch = bindSwitch('toggleWalk', (on) => {
-  features.walk = on;
-  if (!on && behavior === 'walk') setBehavior('idle');
-}, 'walkEnabled');
 
-// AI feature toggles
+const wanderSwitch = $('toggleWander');
+const followSwitch = $('toggleFollow');
+function syncMoveMode() {
+  if (followSwitch.classList.contains('on')) setMovementMode('follow');
+  else if (wanderSwitch.classList.contains('on')) setMovementMode('wander');
+  else setMovementMode('off');
+}
+wanderSwitch.addEventListener('click', () => {
+  const on = !wanderSwitch.classList.contains('on');
+  wanderSwitch.classList.toggle('on', on);
+  if (on) followSwitch.classList.remove('on');
+  window.companionAPI?.setSetting('moveMode', followSwitch.classList.contains('on') ? 'follow' : on ? 'wander' : 'off');
+  syncMoveMode();
+});
+followSwitch.addEventListener('click', () => {
+  const on = !followSwitch.classList.contains('on');
+  followSwitch.classList.toggle('on', on);
+  if (on) wanderSwitch.classList.remove('on');
+  window.companionAPI?.setSetting('moveMode', on ? 'follow' : wanderSwitch.classList.contains('on') ? 'wander' : 'off');
+  syncMoveMode();
+});
+
 bindSwitch('toggleMemory', null, 'memoryEnabled');
 bindSwitch('toggleVision', null, 'visionEnabled');
 const ttsSwitch = bindSwitch('toggleTTS', (on) => {
   $('ttsRow').style.display = on ? 'block' : 'none';
+  $('browserVoiceRow').style.display = on ? 'none' : 'block';
 }, 'ttsEnabled');
 
 $('sizeSlider').addEventListener('input', (e) => {
@@ -436,35 +434,70 @@ $('volSlider').addEventListener('input', (e) => {
   window.companionAPI?.setSetting('volume', Number(e.target.value));
 });
 
-$('summonBtn').addEventListener('click', () => {
-  if (!features.walk) { showBubble('Turn on Walk / wander first!'); return; }
-  summonToCursor();
+$('comeHereBtn').addEventListener('click', () => {
+  setMovementMode('follow');
+
+  setTimeout(() => {
+    if (!followSwitch.classList.contains('on')) syncMoveMode();
+  }, 5000);
 });
 $('clearMemoryBtn').addEventListener('click', async () => {
   await window.companionAPI?.memoryClear();
   showBubble('Memory cleared.');
 });
 
-// ---- AI provider settings ----
+const PROVIDER_MODELS = {
+  anthropic: ['claude-sonnet-4-6', 'claude-opus-4-1', 'claude-haiku-4-5'],
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'o4-mini'],
+  google: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
+  ollama: ['llama3.2', 'llama3.2-vision', 'llava', 'mistral', 'qwen2.5'],
+};
+
+function populateModelList(provider, keepValue) {
+  const dl = $('modelList');
+  dl.innerHTML = '';
+  (PROVIDER_MODELS[provider] || []).forEach((m) => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    dl.appendChild(opt);
+  });
+  if (!keepValue) {
+    const def = (PROVIDER_MODELS[provider] || [])[0] || '';
+    if (provider === 'ollama') {
+      $('ollamaModelInput').value = $('ollamaModelInput').value || def;
+      window.companionAPI?.setSetting('ollamaModel', $('ollamaModelInput').value);
+    } else {
+      $('modelInput').value = def;
+      window.companionAPI?.setSetting('aiModel', def);
+    }
+  }
+}
+
 function updateProviderUI() {
   const isOllama = aiProvider === 'ollama';
   $('apiKeyRow').style.display = isOllama ? 'none' : 'block';
   $('ollamaRow').style.display = isOllama ? 'block' : 'none';
+  $('modelInput').parentElement.style.display = isOllama ? 'none' : 'block';
 }
 $('providerSelect').addEventListener('change', async (e) => {
   aiProvider = e.target.value;
   window.companionAPI?.setSetting('aiProvider', aiProvider);
   updateProviderUI();
+  populateModelList(aiProvider, false);
   await loadApiKeyIntoField();
 });
 $('modelInput').addEventListener('change', (e) => window.companionAPI?.setSetting('aiModel', e.target.value));
-$('apiKeyInput').addEventListener('change', async (e) => {
+
+async function saveTextApiKey() {
   const all = (await window.companionAPI?.getAllSettings?.()) || {};
   const apiKeys = all.apiKeys || {};
-  apiKeys[aiProvider] = e.target.value;
-  window.companionAPI?.setSetting('apiKeys', apiKeys);
-  $('apiKeyStatus').textContent = e.target.value ? 'Key saved locally.' : '';
-});
+  apiKeys[aiProvider] = $('apiKeyInput').value;
+  await window.companionAPI?.setSetting('apiKeys', apiKeys);
+  $('apiKeyStatus').textContent = $('apiKeyInput').value ? '✓ Key set and saved.' : 'Key cleared.';
+}
+$('setApiKeyBtn').addEventListener('click', saveTextApiKey);
+$('apiKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveTextApiKey(); });
+
 $('ollamaUrlInput').addEventListener('change', (e) => window.companionAPI?.setSetting('ollamaUrl', e.target.value));
 $('ollamaModelInput').addEventListener('change', (e) => window.companionAPI?.setSetting('ollamaModel', e.target.value));
 $('ollamaCheckBtn').addEventListener('click', async () => {
@@ -476,69 +509,143 @@ $('ollamaCheckBtn').addEventListener('click', async () => {
     : 'Could not reach Ollama. Is it running?';
 });
 
-// ---- TTS settings ----
-$('ttsProviderSelect').addEventListener('change', (e) => window.companionAPI?.setSetting('ttsProvider', e.target.value));
-$('ttsVoiceInput').addEventListener('change', (e) => window.companionAPI?.setSetting('ttsVoice', e.target.value));
-$('elevenKeyInput').addEventListener('change', async (e) => {
+const TTS_VOICES = {
+  openai: [
+    { id: 'nova', label: 'Nova (bright female)' },
+    { id: 'shimmer', label: 'Shimmer (soft female)' },
+    { id: 'coral', label: 'Coral (warm female)' },
+    { id: 'alloy', label: 'Alloy (neutral)' },
+    { id: 'fable', label: 'Fable (expressive)' },
+    { id: 'sage', label: 'Sage (gentle)' },
+    { id: 'ballad', label: 'Ballad (storyteller)' },
+    { id: 'ash', label: 'Ash (calm)' },
+    { id: 'echo', label: 'Echo (warm male)' },
+    { id: 'onyx', label: 'Onyx (deep male)' },
+  ],
+  elevenlabs: [
+    { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Bella (soft, high — anime-like)' },
+    { id: 'jBpfAIEqvSfVk9B0CIjw', label: 'Gigi (young, bright — anime-like)' },
+    { id: '21m00Tcm4TlvDq8ikWAM', label: 'Rachel (calm female)' },
+    { id: 'AZnzlk1XvdvUeBnXmlld', label: 'Domi (strong female)' },
+    { id: 'MF3mGyEYCl7XYWbV9V6O', label: 'Elli (young female)' },
+    { id: 'jsCqWAovK2LkecY7zXl4', label: 'Freya (warm female)' },
+    { id: 'oWAxZDx7w5VEj9dCyTzz', label: 'Grace (gentle female)' },
+    { id: 'XB0fDUnXU5powFXDhCwa', label: 'Charlotte (sweet female)' },
+    { id: 'ErXwobaYiN019PkySvjV', label: 'Antoni (warm male)' },
+    { id: 'TxGEqnHWrfWFTfGW9XjX', label: 'Josh (deep male)' },
+    { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam (narration male)' },
+    { id: 'VR6AewLTigWG4xSOukaG', label: 'Arnold (strong male)' },
+  ],
+};
+
+function populateVoiceList(provider, savedVoice) {
+  const sel = $('ttsVoiceSelect');
+  sel.innerHTML = '';
+  (TTS_VOICES[provider] || []).forEach((v) => {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = v.label;
+    sel.appendChild(opt);
+  });
+  const list = TTS_VOICES[provider] || [];
+  if (savedVoice && list.some((v) => v.id === savedVoice)) {
+    sel.value = savedVoice;
+    $('ttsVoiceCustom').value = '';
+  } else if (savedVoice) {
+    $('ttsVoiceCustom').value = savedVoice;
+  } else {
+    sel.value = list[0]?.id || '';
+    window.companionAPI?.setSetting('ttsVoice', sel.value);
+  }
+  $('elevenKeyRow').style.display = provider === 'elevenlabs' ? 'block' : 'none';
+}
+
+$('ttsProviderSelect').addEventListener('change', async (e) => {
+  const prov = e.target.value;
+  await window.companionAPI?.setSetting('ttsProvider', prov);
+  populateVoiceList(prov, null);
+});
+$('ttsVoiceSelect').addEventListener('change', (e) => {
+  $('ttsVoiceCustom').value = '';
+  window.companionAPI?.setSetting('ttsVoice', e.target.value);
+});
+$('ttsVoiceCustom').addEventListener('change', (e) => {
+  if (e.target.value.trim()) window.companionAPI?.setSetting('ttsVoice', e.target.value.trim());
+});
+
+async function saveVoiceKey() {
   const all = (await window.companionAPI?.getAllSettings?.()) || {};
   const apiKeys = all.apiKeys || {};
-  apiKeys.elevenlabs = e.target.value;
-  window.companionAPI?.setSetting('apiKeys', apiKeys);
+  apiKeys.elevenlabs = $('elevenKeyInput').value;
+  await window.companionAPI?.setSetting('apiKeys', apiKeys);
+  $('voiceKeyStatus').textContent = $('elevenKeyInput').value ? '✓ Voice key set and saved.' : 'Key cleared.';
+}
+$('setVoiceKeyBtn').addEventListener('click', saveVoiceKey);
+$('elevenKeyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveVoiceKey(); });
+
+$('testVoiceBtn').addEventListener('click', async () => {
+  $('testVoiceBtn').textContent = 'Speaking…';
+  await speakReal('Hi! This is how I sound.');
+  $('testVoiceBtn').textContent = 'Test voice';
+});
+
+function populateBrowserVoices() {
+  if (!('speechSynthesis' in window)) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const sel = $('browserVoiceSelect');
+  sel.innerHTML = '';
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = '(system default)';
+  sel.appendChild(defaultOpt);
+  voices.forEach((v) => {
+    const opt = document.createElement('option');
+    opt.value = v.name;
+    opt.textContent = `${v.name} (${v.lang})`;
+    sel.appendChild(opt);
+  });
+}
+if ('speechSynthesis' in window) {
+  populateBrowserVoices();
+  window.speechSynthesis.onvoiceschanged = populateBrowserVoices;
+}
+$('browserVoiceSelect').addEventListener('change', (e) => {
+  window.companionAPI?.setSetting('browserVoice', e.target.value);
+  speakBrowser('Hello!');
 });
 
 async function loadApiKeyIntoField() {
   const all = (await window.companionAPI?.getAllSettings?.()) || {};
   const apiKeys = all.apiKeys || {};
   $('apiKeyInput').value = apiKeys[aiProvider] || '';
-  $('apiKeyStatus').textContent = apiKeys[aiProvider] ? 'Key saved locally.' : 'No key set yet.';
+  $('apiKeyStatus').textContent = apiKeys[aiProvider] ? '✓ Key set and saved.' : 'No key set yet.';
 }
 
-// =============================================================================
-// Pose system
-// =============================================================================
-// A VRM's bind pose is a T-pose: arms straight out horizontally, every bone at
-// rotation zero. To bring an arm DOWN to the side you rotate the upper arm
-// about its Z axis. The direction of that rotation depends on the rig's axis
-// convention. Rather than scatter +/- signs through every pose (which is what
-// made them inconsistent — some poses fought the base pose), ALL arm rotations
-// below are expressed as multiples of ARM_DOWN, a single signed constant for
-// "rotate the LEFT arm one unit toward the body's side." The right arm uses
-// the mirror automatically. Flip ARM_DOWN's sign in ONE place if a model's
-// arms raise instead of lower.
-//
-// Convention used here (matches the standard VRM/three-vrm normalized space):
-//   left upper arm, +Z  => arm rotates DOWN to the left side
-//   right upper arm, -Z => arm rotates DOWN to the right side
-const ARM_DOWN = 1.25; // ~72°: T-pose (horizontal) down to nearly vertical at the sides
+const ARM_DOWN = 1.25;
 
-// Helper: arm rotation expressed in "down units." `lift` 0 = fully down at the
-// side (rest), 1 = back up to horizontal (T-pose), >1 = above horizontal.
-// Returns the correct signed Z for whichever side. amt is the lift fraction.
 function armZ(side, lift) {
-  // lift 0 -> full down (ARM_DOWN), lift 1 -> 0 (horizontal), lift 2 -> -ARM_DOWN (up)
+
   const z = ARM_DOWN * (1 - lift);
   return side === 'left' ? z : -z;
 }
 
 const BASE_POSE = {
-  chest: { x: 0, y: 0, z: 0 },
-  spine: { x: 0, y: 0, z: 0 },
-  hips: { x: 0, y: 0, z: 0 },
-  head: { x: 0, y: 0, z: 0 },
-  // Arms relaxed down at the sides with a small outward gap, plus a slight
-  // forward+inward angle and a gentle resting elbow bend. Real arms are never
-  // perfectly straight or pinned flat to the body — this is what kills the
-  // "stiff mannequin" look in the neutral pose.
-  leftUpperArm: { x: 0.08, y: 0, z: armZ('left', 0.10) },
-  rightUpperArm: { x: 0.08, y: 0, z: armZ('right', 0.10) },
-  leftLowerArm: { x: 0, y: 0.18, z: 0.25 },
-  rightLowerArm: { x: 0, y: -0.18, z: -0.25 },
-  leftHand: { x: 0, y: 0, z: 0.1 },
-  rightHand: { x: 0, y: 0, z: -0.1 },
-  leftUpperLeg: { x: 0, y: 0, z: 0.02 },
-  rightUpperLeg: { x: 0, y: 0, z: -0.02 },
-  leftLowerLeg: { x: 0.04, y: 0, z: 0 },
-  rightLowerLeg: { x: 0.04, y: 0, z: 0 },
+  chest: { x: 0.02, y: 0.01, z: 0.01 },
+  spine: { x: 0.015, y: 0.02, z: 0.02 },
+  hips: { x: 0, y: 0, z: -0.03 },
+  head: { x: 0.01, y: -0.02, z: 0.015 },
+
+  leftUpperArm: { x: 0.14, y: 0.04, z: armZ('left', 0.16) },
+  rightUpperArm: { x: 0.12, y: -0.03, z: armZ('right', 0.13) },
+  leftLowerArm: { x: 0.05, y: 0.28, z: 0.4 },
+  rightLowerArm: { x: 0.04, y: -0.24, z: -0.34 },
+  leftHand: { x: 0.05, y: 0.06, z: 0.16 },
+  rightHand: { x: 0.04, y: -0.05, z: -0.13 },
+  leftUpperLeg: { x: 0.02, y: 0.01, z: 0.05 },
+  rightUpperLeg: { x: -0.04, y: -0.01, z: -0.02 },
+  leftLowerLeg: { x: 0.06, y: 0, z: 0 },
+  rightLowerLeg: { x: 0.12, y: 0, z: 0 },
 };
 
 let behavior = 'idle';
@@ -562,11 +669,8 @@ const TRACKED_BONES = Object.keys(BASE_POSE);
 const _targetEuler = new THREE.Euler();
 const _targetQuat = new THREE.Quaternion();
 
-// World-space object the VRM eyes aim at (positioned in front of the model and
-// offset toward the cursor each frame).
 const lookAtTarget = new THREE.Object3D();
 
-// Feature flags, hydrated from settings on boot.
 const features = {
   eyeTracking: true,
   idleVariation: true,
@@ -582,7 +686,6 @@ function resetPoseImmediate() {
   modelGroup.position.y = 0;
 }
 
-// Eye/head tracking offset, updated from the main-process cursor broadcast.
 let cursorX = 0, cursorY = 0;
 window.companionAPI?.onCursorPosition((p) => { cursorX = p.x; cursorY = p.y; });
 
@@ -595,25 +698,14 @@ function setAbs(targets, name, x, y, z) {
   targets[name].x = x; targets[name].y = y; targets[name].z = z;
 }
 
-// Set a whole arm ABSOLUTELY (overriding the base) in human terms:
-//   lift  : 0 = down at side, 1 = straight out (T), 1.5 = up at ~135°, 2 = straight up
-//   fwd   : how far the arm swings forward (toward the viewer), radians on X
-//   bend  : elbow bend amount, 0 = straight, ~1.6 = right angle (always folds inward)
 function armLift(targets, side, lift, fwd = 0, bend = 0) {
   const upper = side === 'left' ? 'leftUpperArm' : 'rightUpperArm';
   const lower = side === 'left' ? 'leftLowerArm' : 'rightLowerArm';
   setAbs(targets, upper, fwd, 0, armZ(side, lift));
-  // elbow always bends the forearm toward the body's centerline, regardless of side
+
   setAbs(targets, lower, 0, 0, side === 'left' ? bend : -bend);
 }
 
-// ---------------------------------------------------------------------------
-// Pose library — each fn receives `targets` (already holding BASE_POSE + idle
-// breathing/sway) and shapes it. Arm poses use armLift() so they're expressed
-// as absolute lift levels in the SAME convention as the base, instead of raw
-// signed radians that could fight the base pose. `el` = seconds since this
-// behavior was selected.
-// ---------------------------------------------------------------------------
 const POSES = {
   idle: { label: 'Idle / breathing', fn: () => {} },
 
@@ -629,9 +721,9 @@ const POSES = {
     fn: (t, el, targets) => {
       const raise = Math.min(el / 0.4, 1);
       const wiggle = Math.sin(el * 9) * 0.4;
-      // upper arm lifts out to ~135°, elbow bent up, hand wags
+
       armLift(targets, 'right', 0.55 + 0.85 * raise, 0.1 * raise, 1.0 * raise);
-      add(targets, 'rightLowerArm', 0, 0, wiggle); // wag on top of the bend
+      add(targets, 'rightLowerArm', 0, 0, wiggle);
       add(targets, 'head', 0, -0.15 * raise, 0);
     },
   },
@@ -643,7 +735,7 @@ const POSES = {
       add(targets, 'spine', 0.05, 0, 0.10 + gust * 0.04);
       add(targets, 'chest', 0, 0, 0.06 + gust * 0.03);
       add(targets, 'head', 0, -0.08 - gust * 0.05, -0.05);
-      // arms lift slightly off the sides as if pushed by wind
+
       armLift(targets, 'left', 0.18 + gust * 0.05);
       armLift(targets, 'right', 0.18 + gust * 0.05);
     },
@@ -666,7 +758,7 @@ const POSES = {
   thinking: {
     label: 'Thinking',
     fn: (t, el, targets) => {
-      // hand to chin: arm partly raised, elbow strongly bent, head tilted
+
       armLift(targets, 'right', 0.5, 0.5, 1.7);
       add(targets, 'head', 0.1, 0, -0.12);
     },
@@ -687,7 +779,7 @@ const POSES = {
     label: 'Salute',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // hand to forehead: arm up to horizontal-ish, elbow folded toward head
+
       armLift(targets, 'right', 0.5 + 0.5 * d, 0.2 * d, 1.9 * d);
     },
   },
@@ -696,7 +788,7 @@ const POSES = {
     label: 'Clap',
     fn: (t, el, targets) => {
       const clapPhase = Math.abs(Math.sin(el * 6));
-      // both arms up in front, elbows bent so hands meet at center
+
       armLift(targets, 'left', 0.7, 0.7, 1.0 + clapPhase * 0.3);
       armLift(targets, 'right', 0.7, 0.7, 1.0 + clapPhase * 0.3);
     },
@@ -717,7 +809,7 @@ const POSES = {
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
       add(targets, 'chest', 0, 0, 0.08 * d);
-      // arms lift slightly out, palms-up elbow bend
+
       armLift(targets, 'left', 0.25 * d, 0.1 * d, 0.7 * d);
       armLift(targets, 'right', 0.25 * d, 0.1 * d, 0.7 * d);
       add(targets, 'head', 0.05 * d, 0, 0);
@@ -728,7 +820,7 @@ const POSES = {
     label: 'Point forward',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // straight arm raised forward toward the viewer
+
       armLift(targets, 'right', 0.85 * d + 0.06 * (1 - d), 0.9 * d, 0);
     },
   },
@@ -737,7 +829,7 @@ const POSES = {
     label: 'Peace sign',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // arm up beside head, elbow bent
+
       armLift(targets, 'right', 0.5 + 0.7 * d, 0.2 * d, 1.4 * d);
       add(targets, 'head', 0, -0.15 * d, -0.05 * d);
     },
@@ -771,7 +863,7 @@ const POSES = {
     label: 'Yawn',
     fn: (t, el, targets) => {
       const d = el < 1.2 ? Math.sin((el / 1.2) * Math.PI) : 0;
-      // one arm rises to cover mouth, elbow bent
+
       armLift(targets, 'right', 0.5 + 0.5 * d, 0.3 * d, 1.6 * d);
       add(targets, 'head', -0.2 * d, 0, 0);
     },
@@ -781,7 +873,7 @@ const POSES = {
     label: 'Facepalm',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // hand to face: arm raised, elbow heavily folded
+
       armLift(targets, 'right', 0.5 + 0.55 * d, 0.5 * d, 2.0 * d);
       add(targets, 'head', 0.2 * d, 0, 0.1 * d);
     },
@@ -791,7 +883,7 @@ const POSES = {
     label: 'Arms crossed',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // both arms in toward chest, elbows folded so forearms cross
+
       armLift(targets, 'left', 0.35 * d, 0.4 * d, 1.5 * d);
       armLift(targets, 'right', 0.35 * d, 0.4 * d, 1.5 * d);
       add(targets, 'leftLowerArm', 0, 0.4 * d, 0);
@@ -837,7 +929,7 @@ const POSES = {
     label: 'Bashful',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // hands clasped low in front, head tilted shyly
+
       armLift(targets, 'left', 0.15 * d + 0.06 * (1 - d), 0.3 * d, 0.6 * d);
       armLift(targets, 'right', 0.15 * d + 0.06 * (1 - d), 0.3 * d, 0.6 * d);
       add(targets, 'leftLowerArm', 0, 0.4 * d, 0);
@@ -874,7 +966,7 @@ const POSES = {
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
       add(targets, 'head', 0, 0, 0.25 * d + Math.sin(el * 2) * 0.05);
-      // one hand scratches head
+
       armLift(targets, 'right', 0.5 + 0.6 * d, 0.3 * d, 1.7 * d);
     },
   },
@@ -883,7 +975,7 @@ const POSES = {
     label: 'Determined stance',
     fn: (t, el, targets) => {
       const d = Math.min(el / 0.3, 1);
-      // fists at sides, slight forward lean
+
       armLift(targets, 'left', 0.1 * d + 0.06 * (1 - d), 0.1 * d, 0.5 * d);
       armLift(targets, 'right', 0.1 * d + 0.06 * (1 - d), 0.1 * d, 0.5 * d);
       add(targets, 'chest', -0.06 * d, 0, 0);
@@ -906,22 +998,24 @@ const POSES = {
   walk: {
     label: 'Walk / wander',
     fn: (t, el, targets) => {
-      // alternating leg stride + opposite arm swing
-      const stride = Math.sin(el * 7);
-      add(targets, 'leftUpperLeg', stride * 0.5, 0, 0);
-      add(targets, 'rightUpperLeg', -stride * 0.5, 0, 0);
-      add(targets, 'leftLowerLeg', Math.max(0, -stride) * 0.6, 0, 0);
-      add(targets, 'rightLowerLeg', Math.max(0, stride) * 0.6, 0, 0);
-      armLift(targets, 'left', 0.06, -stride * 0.2, 0.15);
-      armLift(targets, 'right', 0.06, stride * 0.2, 0.15);
-      add(targets, 'spine', 0.05, stride * 0.05, 0);
-      modelGroup.position.y = Math.abs(Math.sin(el * 14)) * 0.01;
+      const phase = el * 8;
+      const stride = Math.sin(phase);
+      const lift = Math.cos(phase);
+      add(targets, 'spine', 0.08, stride * 0.06, 0);
+      add(targets, 'chest', 0.04, 0, 0);
+      add(targets, 'hips', 0, -stride * 0.08, 0);
+      add(targets, 'leftUpperLeg', stride * 0.55, 0, 0);
+      add(targets, 'rightUpperLeg', -stride * 0.55, 0, 0);
+      add(targets, 'leftLowerLeg', Math.max(0, lift) * 0.8, 0, 0);
+      add(targets, 'rightLowerLeg', Math.max(0, -lift) * 0.8, 0, 0);
+      armLift(targets, 'left', 0.08, -stride * 0.35, 0.3);
+      armLift(targets, 'right', 0.08, stride * 0.35, 0.3);
+      add(targets, 'head', 0.03, stride * 0.04, 0);
+      modelGroup.position.y = Math.abs(Math.sin(phase)) * 0.015;
     },
   },
 };
 
-// Populate the behavior dropdown from the pose library above instead of
-// hand-written <option> tags, so the 20+ extra poses are all available.
 (() => {
   const sel = $('behaviorSelect');
   sel.innerHTML = '';
@@ -939,50 +1033,60 @@ function computePoseTargets(t, el) {
   TRACKED_BONES.forEach((n) => (targets[n] = { ...BASE_POSE[n] }));
 
   const def = POSES[behavior] || POSES.idle;
-  if (def.freeze) return null; // 'still' — leave bones exactly where they are
+  if (def.freeze) return null;
 
-  // Multiple slow oscillators at unrelated frequencies, so the idle never
-  // looks like a single repeating sine wave. Breathing drives chest+spine+
-  // shoulders together; a much slower cycle shifts the body weight side to
-  // side; tiny high-frequency noise keeps limbs from ever being dead-still.
   const amp = asleep ? 0.4 : 1;
-  const breathe = Math.sin(t * 1.4 * swaySpeed) * 0.02 * amp;
-  const sway = Math.sin(t * 0.6 * swaySpeed) * 0.05 * amp;
-  const weight = Math.sin(t * 0.22 * swaySpeed) * 0.06 * amp;     // slow weight shift
-  const drift = Math.sin(t * 0.9 + 1.3) * 0.015 * amp;            // secondary arm drift
-  const microL = Math.sin(t * 2.3 + 0.5) * 0.01 * amp;
-  const microR = Math.sin(t * 2.1 + 2.1) * 0.01 * amp;            // different phase per side
 
-  // breathing spread across the torso chain, not just one bone
-  add(targets, 'chest', breathe * 0.6, 0, breathe);
-  add(targets, 'spine', breathe * 0.3, sway * 0.4, weight * 0.5);
-  add(targets, 'hips', 0, 0, weight);                            // hips lead the weight shift
-  // weight shift bends the opposite knee slightly, like real standing
-  add(targets, 'leftUpperLeg', 0, 0, weight * 0.4);
-  add(targets, 'rightUpperLeg', 0, 0, weight * 0.4);
+  const breathe = (Math.sin(t * 1.1 * swaySpeed) + Math.sin(t * 1.7 * swaySpeed + 0.6) * 0.4) * 0.022 * amp;
+  const sway = (Math.sin(t * 0.45 * swaySpeed) + Math.sin(t * 0.8 * swaySpeed + 1.1) * 0.35) * 0.06 * amp;
+  const weight = Math.sin(t * 0.16 * swaySpeed) * 0.1 * amp;
+  const weightFast = Math.sin(t * 0.33 * swaySpeed + 0.7) * 0.03 * amp;
+  const drift = Math.sin(t * 0.7 + 1.3) * 0.03 * amp;
+  const driftSlow = Math.sin(t * 0.27 + 2.4) * 0.04 * amp;
+  const microL = (Math.sin(t * 1.9 + 0.5) + Math.sin(t * 3.1 + 1.7) * 0.4) * 0.018 * amp;
+  const microR = (Math.sin(t * 1.7 + 2.1) + Math.sin(t * 2.9 + 0.3) * 0.4) * 0.018 * amp;
 
-  // arms breathe/drift independently per side so they're never mirror-identical
-  add(targets, 'leftUpperArm', microL, 0, sway * 0.08 + drift + breathe * 0.4);
-  add(targets, 'rightUpperArm', microR, 0, -sway * 0.08 - drift - breathe * 0.4);
-  add(targets, 'leftLowerArm', 0, microL * 2, 0);
-  add(targets, 'rightLowerArm', 0, -microR * 2, 0);
+  add(targets, 'chest', breathe * 0.7, sway * 0.15, breathe + weightFast * 0.3);
+  add(targets, 'spine', breathe * 0.35, sway * 0.45, weight * 0.55);
+  add(targets, 'hips', weightFast * 0.4, sway * 0.1, weight);
+
+  add(targets, 'leftUpperLeg', 0, 0, weight * 0.5 - weightFast * 0.2);
+  add(targets, 'rightUpperLeg', 0, 0, weight * 0.5 + weightFast * 0.2);
+  add(targets, 'leftLowerLeg', Math.max(0, -weight) * 0.5, 0, 0);
+  add(targets, 'rightLowerLeg', Math.max(0, weight) * 0.5, 0, 0);
+
+  add(targets, 'leftUpperArm', microL + driftSlow * 0.3, drift * 0.5, sway * 0.12 + drift + breathe * 0.5);
+  add(targets, 'rightUpperArm', microR - driftSlow * 0.3, -drift * 0.5, -sway * 0.12 - drift - breathe * 0.5);
+  add(targets, 'leftLowerArm', microL * 1.5, microL * 2.5 + driftSlow, drift * 0.4);
+  add(targets, 'rightLowerArm', microR * 1.5, -microR * 2.5 - driftSlow, -drift * 0.4);
+  add(targets, 'leftHand', 0, microL * 3, microL * 2);
+  add(targets, 'rightHand', 0, -microR * 3, -microR * 2);
 
   const eyeYaw = cursorX * 0.4;
   const eyePitch = -cursorY * 0.25;
 
   if (asleep) {
-    add(targets, 'head', 0.35 + breathe, 0, 0.1); // chin down, gentle breathing
+    add(targets, 'head', 0.35 + breathe, sway * 0.2, 0.1);
   } else {
-    // head leads the weight shift slightly and follows the cursor
-    add(targets, 'head', breathe * 0.5 + eyePitch, sway * 0.6 + eyeYaw - weight * 0.3, weight * 0.4);
+
+    add(targets, 'head', breathe * 0.6 + eyePitch + driftSlow * 0.3, sway * 0.7 + eyeYaw - weight * 0.35, weight * 0.45 + sway * 0.1);
   }
 
   if (!asleep) def.fn(t, el, targets);
 
+  if (!asleep && behavior !== 'idle') {
+    const lifeBreathe = Math.sin(t * 1.2) * 0.012;
+    const lifeSway = Math.sin(t * 0.5 + 0.8) * 0.018;
+    add(targets, 'chest', lifeBreathe, 0, lifeBreathe * 0.5);
+    add(targets, 'spine', lifeBreathe * 0.4, lifeSway * 0.3, lifeSway * 0.2);
+    add(targets, 'head', lifeBreathe * 0.3, lifeSway * 0.4, 0);
+    add(targets, 'leftUpperArm', microL * 0.6, 0, microL * 0.4);
+    add(targets, 'rightUpperArm', microR * 0.6, 0, -microR * 0.4);
+  }
+
   return targets;
 }
 
-// click/drag "reaction" — a brief squish + surprised expression
 let reactionUntil = 0;
 stage.addEventListener('mousedown', () => {
   reactionUntil = performance.now() + 260;
@@ -997,38 +1101,41 @@ function wakeUp() {
 }
 
 const clock = new THREE.Clock();
-const SMOOTH = 14; // higher = snappier easing, lower = floatier
+const SMOOTH = 9;
+
+const BONE_EASE = {
+  hips: 4, spine: 5, chest: 6,
+  head: 8,
+  leftUpperArm: 6, rightUpperArm: 6,
+  leftLowerArm: 9, rightLowerArm: 9,
+  leftHand: 12, rightHand: 12,
+  leftUpperLeg: 5, rightUpperLeg: 5,
+  leftLowerLeg: 8, rightLowerLeg: 8,
+};
 
 function applyPoseSmoothed(dt, t) {
   if (!currentVrm?.humanoid) return;
 
   const el = t - poseStartTime;
-  if (behavior !== 'spin') modelGroup.rotation.y = THREE.MathUtils.lerp(modelGroup.rotation.y, 0, 1 - Math.exp(-6 * dt));
-  if (!['dance', 'jump', 'kneel'].includes(behavior)) {
+
+  if (!['dance', 'jump', 'kneel', 'walk'].includes(behavior)) {
     modelGroup.position.y = THREE.MathUtils.lerp(modelGroup.position.y, 0, 1 - Math.exp(-6 * dt));
   }
 
   const targets = computePoseTargets(t, el);
-  if (!targets) return; // 'still' — freeze exactly as-is
+  if (!targets) return;
 
-  const alpha = 1 - Math.exp(-SMOOTH * dt); // framerate-independent easing
-
-  // IMPORTANT: interpolate rotations as quaternions (slerp), not as separate
-  // x/y/z Euler angles. Lerping each Euler axis independently does NOT
-  // produce a valid in-between rotation when more than one axis changes at
-  // once — the result can be an orientation that isn't actually "between"
-  // the start and end poses at all, which is exactly what produced limbs
-  // snapping into nonsense positions mid-transition between poses.
   TRACKED_BONES.forEach((name) => {
     const b = bone(name);
     if (!b) return;
     const target = targets[name];
     _targetEuler.set(target.x, target.y, target.z, 'XYZ');
     _targetQuat.setFromEuler(_targetEuler);
-    b.quaternion.slerp(_targetQuat, alpha);
+
+    const speed = BONE_EASE[name] || SMOOTH;
+    b.quaternion.slerp(_targetQuat, 1 - Math.exp(-speed * dt));
   });
 
-  // click squish reaction (scale pulse on the whole model)
   const now = performance.now();
   const squish = now < reactionUntil ? 0.92 : 1.0;
   const targetScale = (Number($('sizeSlider').value) / 100) * squish;
@@ -1039,32 +1146,21 @@ function applyPoseSmoothed(dt, t) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Ambient wind. Runs every frame so hair/cloth are always alive. The key to
-// hair actually *blowing* (vs. just hanging) is driving the spring bones'
-// gravityPOWER (force magnitude), not only gravityDir — gravityDir is a unit
-// vector, so changing it alone just re-aims the same small force. Here both
-// the direction AND the strength swing with layered sine waves at unrelated
-// frequencies to fake turbulence. The "wind gust" pose surges the strength
-// much higher for a dramatic blowing effect.
-// ---------------------------------------------------------------------------
 function applyAmbientWind(t) {
   const manager = currentVrm?.springBoneManager;
   if (!manager?.joints) return;
   try {
     const boosted = behavior === 'wind';
 
-    // turbulence: several offset sines so gusts swell and fade unevenly
     const gust = (Math.sin(t * 0.8) * 0.5 + Math.sin(t * 1.9 + 1.0) * 0.3 + Math.sin(t * 3.7 + 2.0) * 0.2);
     const dirX = Math.sin(t * 1.6) * 0.6 + gust * 0.3;
     const dirZ = Math.cos(t * 1.1) * 0.4 + gust * 0.2;
 
-    // baseline breeze keeps a little motion; gust pose pushes far harder
-    const basePower = 0.25;                              // gentle constant breeze
-    const swing = (0.5 + 0.5 * gust);                    // 0..1 turbulence envelope
+    const basePower = 0.25;
+    const swing = (0.5 + 0.5 * gust);
     const power = boosted
-      ? basePower + 1.6 * swing                          // strong, visibly blowing
-      : basePower + 0.35 * swing;                        // subtle ambient sway
+      ? basePower + 1.6 * swing
+      : basePower + 0.35 * swing;
 
     manager.joints.forEach((joint) => {
       const s = joint.settings;
@@ -1072,19 +1168,13 @@ function applyAmbientWind(t) {
       if (s._origGravityPower === undefined) {
         s._origGravityPower = (s.gravityPower !== undefined) ? s.gravityPower : 0;
       }
-      // aim the force mostly sideways (wind) with the model's own gravity still
-      // pulling down a bit, then set how hard it pushes
+
       if (s.gravityDir) s.gravityDir.set(dirX, -0.5, dirZ).normalize();
       if (s.gravityPower !== undefined) s.gravityPower = s._origGravityPower + power;
     });
-  } catch (e) { /* spring bone API differs on this model/version — safe to skip */ }
+  } catch (e) {  }
 }
 
-
-
-// =============================================================================
-// Blink cycle + expressions + lip-sync
-// =============================================================================
 let currentExpression = 'neutral';
 let nextBlinkAt = 0;
 let blinkUntil = 0;
@@ -1109,7 +1199,6 @@ function updateBlinkAndExpression(t) {
   const em = currentVrm?.expressionManager;
   if (!em) return;
 
-  // periodic auto-blink
   if (t > nextBlinkAt && blinkUntil < t) {
     blinkUntil = t + 0.12;
     nextBlinkAt = t + 2.2 + Math.random() * 3.0;
@@ -1117,7 +1206,6 @@ function updateBlinkAndExpression(t) {
   const blinkValue = asleep ? 1 : (t < blinkUntil ? 1 : 0);
   em.setValue('blink', blinkValue);
 
-  // temporary "reaction" expression overrides the selected one briefly
   if (flashExpressionName && performance.now() < flashExpressionUntil) {
     EXPRESSION_NAMES.forEach((n) => em.setValue(n, n === flashExpressionName ? 1 : 0));
   } else if (flashExpressionName) {
@@ -1125,18 +1213,13 @@ function updateBlinkAndExpression(t) {
     applyExpression(currentExpression);
   }
 
-  // lip-sync: drive the 'aa' viseme (fallback to 'a') from the synthetic
-  // amplitude envelope produced while speaking (see speak() below)
   const mouthValue = speaking ? mouthEnvelope : 0;
   if (em.setValue) {
-    try { em.setValue('aa', mouthValue); } catch (e) { /* preset not present on this model */ }
+    try { em.setValue('aa', mouthValue); } catch (e) {  }
   }
 }
 
-// =============================================================================
-// Auto-sleep after inactivity
-// =============================================================================
-const SLEEP_AFTER_MS = 5 * 60 * 1000; // 5 minutes idle
+const SLEEP_AFTER_MS = 5 * 60 * 1000;
 function checkAutoSleep() {
   if (!autoSleepSwitch.get()) return;
   if (!asleep && performance.now() - lastInteractionTime > SLEEP_AFTER_MS) {
@@ -1148,21 +1231,35 @@ function checkAutoSleep() {
   window.addEventListener(evt, () => { lastInteractionTime = performance.now(); })
 );
 
-// =============================================================================
-// Speech bubble + idle chatter (now contextual via AI when a key is set)
-// =============================================================================
 const fallbackLines = [
   "Don't forget to take a break~",
   'Compiling... or am I just thinking?',
   'Nice desktop today.',
   "I'm watching the cursor. No reason.",
   '*stretches*',
+  'How long have we been at this?',
+  'I could go for a snack. Metaphorically.',
+  'You doing okay over there?',
+  'The cursor went that way. I saw it.',
+  'Just vibing on your desktop.',
+  '*hums quietly*',
+  "Don't mind me.",
 ];
+
+let lastChatterLine = '';
+function pickFallbackLine() {
+  if (fallbackLines.length < 2) return fallbackLines[0];
+  let line;
+  do { line = fallbackLines[Math.floor(Math.random() * fallbackLines.length)]; }
+  while (line === lastChatterLine);
+  lastChatterLine = line;
+  return line;
+}
 
 function showBubble(text) {
   bubble.textContent = text;
-  bubble.style.left = (window.innerWidth / 2 + 60) + 'px';
-  bubble.style.top = (window.innerHeight / 2 - 220) + 'px';
+  bubble.style.left = (stage.clientWidth / 2 + 60) + 'px';
+  bubble.style.top = (stage.clientHeight / 2 - 220) + 'px';
   bubble.classList.add('show');
   clearTimeout(showBubble._t);
   showBubble._t = setTimeout(() => bubble.classList.remove('show'), 4200);
@@ -1180,21 +1277,21 @@ async function generateChatterLine() {
   const all = (await window.companionAPI?.getAllSettings?.()) || {};
   const apiKeys = all.apiKeys || {};
   if (aiProvider !== 'ollama' && !apiKeys[aiProvider]) {
-    return fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+    return pickFallbackLine();
   }
   const hour = new Date().getHours();
   const timeOfDay = hour < 6 ? 'late night' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
   const clipboardNote = clipboardSwitch.get() && lastClipboardSnippet
     ? `The user's clipboard recently contained: "${lastClipboardSnippet.slice(0, 200)}".`
     : '';
-  const system = `You are a small, cheerful desktop companion character. Say one short (under 15 words), casual, in-character idle remark. It is currently the ${timeOfDay}. ${clipboardNote} Do not use quotation marks.`;
+  const system = `You are a small, cheerful desktop companion character. Say one short (under 15 words), casual, in-character idle remark. It is currently the ${timeOfDay}. ${clipboardNote} Do not repeat yourself. Do not use quotation marks.`;
 
   const res = await window.companionAPI?.aiChat(aiProvider, $('modelInput').value, [
     { role: 'user', content: 'Say something idle and in-character.' },
   ], system);
 
-  if (res?.ok && res.text) return res.text;
-  return fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+  if (res?.ok && res.text && res.text !== lastChatterLine) { lastChatterLine = res.text; return res.text; }
+  return pickFallbackLine();
 }
 
 function queueChatter() {
@@ -1203,25 +1300,18 @@ function queueChatter() {
     if (chatterSwitch.get() && !asleep) {
       const line = await generateChatterLine();
       showBubble(line);
-      speak(line);
+      if (idleVoiceSwitch.get()) speak(line);
     }
     queueChatter();
-  }, 9000 + Math.random() * 9000);
+  }, 14000 + Math.random() * 16000);
 }
 
-// =============================================================================
-// Chat input, voice input, and TTS-driven lip-sync
-// =============================================================================
 const chatHistory = [];
 let speaking = false;
 let mouthEnvelope = 0;
 let voiceVolume = 0.8;
 let audioCtx = null;
 
-// Real API TTS path: fetch audio bytes from the main process, decode them,
-// and run a live AnalyserNode so the mouth envelope tracks ACTUAL loudness —
-// true amplitude lip-sync, not the word-timing approximation. Falls back to
-// browser speech synthesis when real TTS is off or unavailable.
 async function speakReal(text) {
   const res = await window.companionAPI?.ttsSpeak(text);
   if (!res?.ok) {
@@ -1249,7 +1339,7 @@ async function speakReal(text) {
     const tick = () => {
       if (!speaking) return;
       analyser.getByteTimeDomainData(data);
-      // RMS amplitude of the waveform → mouth openness
+
       let sum = 0;
       for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
       mouthEnvelope = Math.min(1, Math.sqrt(sum / data.length) * 3.2);
@@ -1272,8 +1362,14 @@ function speakBrowser(text) {
   utter.volume = voiceVolume;
   utter.pitch = 1.15;
   utter.rate = 1.02;
+  const selectedName = $('browserVoiceSelect').value;
+  if (selectedName) {
+    const voices = window.speechSynthesis.getVoices();
+    const match = voices.find((v) => v.name === selectedName);
+    if (match) utter.voice = match;
+  }
   speaking = true;
-  // Word-boundary approximation when no real audio buffer is available.
+
   utter.onboundary = () => {
     mouthEnvelope = 0.55 + Math.random() * 0.45;
     setTimeout(() => { mouthEnvelope = 0.15; }, 90);
@@ -1306,8 +1402,6 @@ async function sendChat(text, opts = {}) {
     return;
   }
 
-  // Persistent memory: prepend a compact recap of remembered past turns so the
-  // companion has continuity across restarts.
   let memoryNote = '';
   if (all.memoryEnabled) {
     const mem = (await window.companionAPI?.memoryGet?.()) || [];
@@ -1324,12 +1418,12 @@ async function sendChat(text, opts = {}) {
     chatHistory.push({ role: 'assistant', content: res.text });
     showBubble(res.text);
     speak(res.text);
-    // persist this exchange into long-term memory
+
     if (all.memoryEnabled) {
       const mem = (await window.companionAPI?.memoryGet?.()) || [];
       mem.push({ role: 'user', content: (text || '[looked at screen]').slice(0, 160) });
       mem.push({ role: 'assistant', content: res.text.slice(0, 160) });
-      // cap to last 40 entries so it doesn't grow unbounded
+
       await window.companionAPI?.memorySet(mem.slice(-40));
     }
   } else {
@@ -1337,7 +1431,6 @@ async function sendChat(text, opts = {}) {
   }
 }
 
-// Vision: capture the screen and ask the companion to comment on it.
 async function lookAtScreen() {
   showBubble('*looks at your screen*');
   const cap = await window.companionAPI?.visionCapture();
@@ -1354,10 +1447,6 @@ $('chatInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('sendBtn').click();
 });
 
-// Voice input via the browser's built-in Speech Recognition. Honest scope
-// note: this uses the OS/Chromium speech service (online, like Chrome's
-// dictation), not a bundled offline Whisper model — adding real Whisper
-// would mean shipping/loading a multi-hundred-MB model file.
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 const micBtn = $('micBtn');
 if (SpeechRecognitionImpl) {
@@ -1386,7 +1475,6 @@ if (SpeechRecognitionImpl) {
   micBtn.title = 'Voice input not supported in this build of Electron';
 }
 
-// Vision button: only acts when vision is enabled in settings.
 $('visionBtn').addEventListener('click', async () => {
   const settings = (await window.companionAPI?.getAllSettings?.()) || {};
   if (!settings.visionEnabled) { showBubble('Enable Vision in Settings → AI first.'); return; }
@@ -1396,9 +1484,6 @@ $('visionBtn').addEventListener('click', async () => {
   btn.classList.remove('active');
 });
 
-// =============================================================================
-// Boot: restore persisted settings, then load character list + last character
-// =============================================================================
 (async () => {
   const settings = (await window.companionAPI?.getAllSettings?.()) || {};
 
@@ -1415,42 +1500,47 @@ $('visionBtn').addEventListener('click', async () => {
   }
   if (settings.aiProvider) { $('providerSelect').value = settings.aiProvider; aiProvider = settings.aiProvider; }
   if (settings.aiModel) $('modelInput').value = settings.aiModel;
+  populateModelList(aiProvider, true);
 
   chatterSwitch.set(settings.chatterEnabled !== false);
+  idleVoiceSwitch.set(!!settings.idleVoiceEnabled);
   autoSleepSwitch.set(settings.autoSleep !== false);
   cpuWarnSwitch.set(settings.cpuWarnEnabled !== false);
   minimalSwitch.set(!!settings.minimalMode);
   document.body.classList.toggle('minimal', !!settings.minimalMode);
 
-  // animation feature flags
   features.eyeTracking = settings.eyeTracking !== false;
   features.idleVariation = settings.idleVariation !== false;
   features.physicsReactions = settings.physicsReactions !== false;
-  features.walk = !!settings.walkEnabled;
   $('toggleEyeTracking').classList.toggle('on', features.eyeTracking);
   $('toggleIdleVariation').classList.toggle('on', features.idleVariation);
   $('togglePhysics').classList.toggle('on', features.physicsReactions);
-  walkSwitch.set(features.walk);
 
-  // AI feature toggles + provider UI
+  const mode = settings.moveMode || 'off';
+  wanderSwitch.classList.toggle('on', mode === 'wander');
+  followSwitch.classList.toggle('on', mode === 'follow');
+  syncMoveMode();
+
   $('toggleMemory').classList.toggle('on', !!settings.memoryEnabled);
   $('toggleVision').classList.toggle('on', !!settings.visionEnabled);
   ttsSwitch.set(!!settings.ttsEnabled);
   $('ttsRow').style.display = settings.ttsEnabled ? 'block' : 'none';
-  if (settings.ttsProvider) $('ttsProviderSelect').value = settings.ttsProvider;
-  if (settings.ttsVoice) $('ttsVoiceInput').value = settings.ttsVoice;
+  $('browserVoiceRow').style.display = settings.ttsEnabled ? 'none' : 'block';
+  if (settings.browserVoice) $('browserVoiceSelect').value = settings.browserVoice;
+  const ttsProv = settings.ttsProvider || 'openai';
+  $('ttsProviderSelect').value = ttsProv;
+  populateVoiceList(ttsProv, settings.ttsVoice || null);
   if (settings.ollamaUrl) $('ollamaUrlInput').value = settings.ollamaUrl;
   if (settings.ollamaModel) $('ollamaModelInput').value = settings.ollamaModel;
   if (settings.apiKeys?.elevenlabs) $('elevenKeyInput').value = settings.apiKeys.elevenlabs;
 
-  // reflect the actual OS login-item state, not just our stored guess
   const startupOn = await window.companionAPI?.getStartup?.();
   startupSwitch.set(!!startupOn);
   muteSwitch.set(!!settings.muted);
   clipboardSwitch.set(!!settings.watchClipboard);
   topSwitch.set(settings.alwaysOnTop !== false);
   clickThroughSwitch.set(!!settings.clickThrough);
-  clickThroughActive = !!settings.clickThrough;
+  charClickThrough = !!settings.clickThrough;
   if (settings.watchClipboard) window.companionAPI?.setWatchClipboard(true);
 
   updateProviderUI();
@@ -1466,18 +1556,14 @@ $('visionBtn').addEventListener('click', async () => {
   }
 })();
 
-// =============================================================================
-// Procedural eye look-at — moves the lookAt target toward the cursor so the
-// eyes track independently of the head.
-// =============================================================================
 const _eyeTmp = new THREE.Vector3();
 function updateEyeLookAt(dt) {
   if (!currentVrm?.lookAt) return;
   if (!features.eyeTracking || asleep) {
-    // park the target straight ahead so eyes recenter
+
     _eyeTmp.set(0, 1.3, 5);
   } else {
-    // place target in front of the head, offset by cursor position
+
     const headPos = currentVrm.humanoid?.getNormalizedBoneNode('head')?.getWorldPosition(new THREE.Vector3())
       || new THREE.Vector3(0, 1.3, 0);
     _eyeTmp.set(headPos.x + cursorX * 1.4, headPos.y - cursorY * 1.0, headPos.z + 4);
@@ -1485,11 +1571,6 @@ function updateEyeLookAt(dt) {
   lookAtTarget.position.lerp(_eyeTmp, 1 - Math.exp(-10 * dt));
 }
 
-// =============================================================================
-// Idle variation — every 20-35s, if the user is on plain "idle", briefly drift
-// to a relaxed alternate pose then back, so a watched companion doesn't loop
-// one identical motion forever.
-// =============================================================================
 const IDLE_ALTERNATES = ['leanback', 'look', 'handsonhips', 'crossarms', 'stretch'];
 let idleVariationUntil = 0;
 let idleVariationNext = performance.now() + 22000;
@@ -1505,67 +1586,49 @@ function updateIdleVariation() {
     idleVariationUntil = now + 3500 + Math.random() * 2500;
     idleVariationNext = now + 22000 + Math.random() * 13000;
   } else if (savedBehaviorForVariation && now > idleVariationUntil) {
-    // only auto-revert if the user hasn't manually changed behavior meanwhile
+
     if (IDLE_ALTERNATES.includes(behavior)) setBehavior('idle');
     savedBehaviorForVariation = null;
   }
 }
 
-// =============================================================================
-// Walk / wander — the window drifts on its own toward waypoints along the
-// screen edges, and walks to the cursor when you summon it. Uses the same
-// per-frame window move IPC as dragging.
-// =============================================================================
-let walkTargetScreen = null;     // {x,y} in screen coords, or null
-let walkRepathAt = 0;
-function pickWanderWaypoint() {
-  // a random point near a screen edge
-  const margin = 60;
-  const w = window.screen.availWidth || 1920;
-  const h = window.screen.availHeight || 1080;
-  const edge = Math.floor(Math.random() * 4);
-  if (edge === 0) return { x: Math.random() * w, y: margin };
-  if (edge === 1) return { x: w - margin, y: Math.random() * h };
-  if (edge === 2) return { x: Math.random() * w, y: h - margin };
-  return { x: margin, y: Math.random() * h };
-}
-function updateWalk(dt, t) {
-  if (!features.walk || asleep || dragging) { if (behavior === 'walk') setBehavior('idle'); return; }
-  const now = performance.now();
-  if (!walkTargetScreen || now > walkRepathAt) {
-    walkTargetScreen = pickWanderWaypoint();
-    walkRepathAt = now + 6000 + Math.random() * 6000;
+let movingNow = false;
+let faceDir = 1;
+let savedBehaviorBeforeWalk = null;
+
+window.companionAPI?.onMoveState((s) => {
+  if (s.moving) {
+    if (!movingNow) {
+      savedBehaviorBeforeWalk = behavior === 'walk' ? 'idle' : behavior;
+      setBehavior('walk');
+    }
+    if (s.dirX !== 0) faceDir = s.dirX;
+    movingNow = true;
+    lastInteractionTime = performance.now();
+  } else {
+    if (movingNow && behavior === 'walk') setBehavior(savedBehaviorBeforeWalk || 'idle');
+    movingNow = false;
   }
-  // approximate our own window-center screen position from cursor broadcasts is
-  // unreliable; instead nudge the window a small step toward the target each
-  // frame via relative moves and let snapping/edges bound it.
-  const stepX = Math.sign(walkTargetScreen.x - (window.screenX + window.innerWidth / 2));
-  const stepY = Math.sign(walkTargetScreen.y - (window.screenY + window.innerHeight / 2));
-  const speed = 1.4;
-  window.companionAPI?.dragWindow(stepX * speed, stepY * speed);
-  if (behavior !== 'walk') setBehavior('walk');
-  // little leg bob so it reads as walking (handled by the 'walk' pose)
+});
+
+window.companionAPI?.onMovePos((p) => {
+  stage.style.bottom = 'auto';
+  stage.style.right = 'auto';
+  stage.style.left = p.x + 'px';
+  stage.style.top = p.y + 'px';
+});
+
+window.companionAPI?.onResetPosition(() => {
+  stage.style.left = '';
+  stage.style.top = '';
+  stage.style.bottom = '20px';
+  stage.style.right = '20px';
+});
+
+function setMovementMode(mode) {
+  window.companionAPI?.setMoveMode(mode);
 }
 
-// summon to cursor: walk toward the current cursor screen position
-function summonToCursor() {
-  if (!features.walk) return;
-  // cursorX/Y are normalized [-1,1] around window center; convert to a screen
-  // waypoint roughly in that direction, a chunk of the screen away.
-  const w = window.screen.availWidth || 1920;
-  const h = window.screen.availHeight || 1080;
-  walkTargetScreen = {
-    x: Math.min(w, Math.max(0, window.screenX + window.innerWidth / 2 + cursorX * w * 0.5)),
-    y: Math.min(h, Math.max(0, window.screenY + window.innerHeight / 2 + cursorY * h * 0.5)),
-  };
-  walkRepathAt = performance.now() + 8000;
-}
-
-// =============================================================================
-// Drag-velocity physics — when you fling the window, the character leans
-// opposite the motion (inertia) and recovers with a springy wobble; spring-bone
-// hair already lags naturally, this adds body lean on top.
-// =============================================================================
 let dragVelX = 0, dragVelY = 0;
 let leanX = 0, leanZ = 0, leanVX = 0, leanVZ = 0;
 function pushDragVelocity(dx, dy) {
@@ -1574,10 +1637,8 @@ function pushDragVelocity(dx, dy) {
 }
 function updatePhysicsLean(dt) {
   if (!features.physicsReactions) { leanX = leanZ = 0; return; }
-  // target lean is proportional to recent drag velocity (opposite direction)
   const targetZ = THREE.MathUtils.clamp(-dragVelX * 0.012, -0.5, 0.5);
   const targetX = THREE.MathUtils.clamp(dragVelY * 0.012, -0.5, 0.5);
-  // critically-damped-ish spring toward target, then target decays to 0
   const k = 90, c = 14;
   leanVZ += (-(leanZ - targetZ) * k - leanVZ * c) * dt;
   leanVX += (-(leanX - targetX) * k - leanVX * c) * dt;
@@ -1587,9 +1648,6 @@ function updatePhysicsLean(dt) {
   dragVelY *= Math.exp(-6 * dt);
 }
 
-// =============================================================================
-// Animation loop
-// =============================================================================
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
@@ -1597,20 +1655,23 @@ function animate() {
 
   checkAutoSleep();
   updateIdleVariation();
-  updateWalk(dt, t);
   updatePhysicsLean(dt);
 
   if (currentVrm) {
     currentVrm.update(dt);
     applyPoseSmoothed(dt, t);
-    // apply drag-physics lean on top of the pose (spine + chest)
     const spine = currentVrm.humanoid?.getNormalizedBoneNode('spine');
     const chest = currentVrm.humanoid?.getNormalizedBoneNode('chest');
     if (spine) { spine.rotation.x += leanX * 0.6; spine.rotation.z += leanZ * 0.6; }
     if (chest) { chest.rotation.x += leanX * 0.4; chest.rotation.z += leanZ * 0.4; }
+
+    const targetYaw = faceDir < 0 ? Math.PI : 0;
+    if (behavior !== 'spin') {
+      modelGroup.rotation.y += (targetYaw - modelGroup.rotation.y) * (1 - Math.exp(-8 * dt));
+    }
     updateEyeLookAt(dt);
     updateBlinkAndExpression(t);
-    applyAmbientWind(t); // hair/cloth physics get a constant gentle breeze, always
+    applyAmbientWind(t);
   }
 
   renderer.render(scene, camera);

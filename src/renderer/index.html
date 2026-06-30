@@ -10,28 +10,25 @@
 <div id="stage">
   <div id="loading"><div>loading character</div><div class="bar"><i></i></div></div>
   <div id="speechBubble"></div>
+  <div id="dragHandle" title="Drag character">⠿</div>
+  <div id="chatBar">
+    <button id="micBtn" title="Voice input">🎤</button>
+    <button id="visionBtn" title="Look at my screen">👁</button>
+    <input id="chatInput" type="text" placeholder="Say something...">
+    <button id="sendBtn" title="Send">➤</button>
+  </div>
+  <div id="gear">⚙</div>
 </div>
 
-<div id="dragHandle" title="Drag me">⠿</div>
-
-<!-- Chat bar: always visible at the bottom, toggled to a full panel on click -->
-<div id="chatBar">
-  <button id="micBtn" title="Voice input">🎤</button>
-  <button id="visionBtn" title="Look at my screen">👁</button>
-  <input id="chatInput" type="text" placeholder="Say something...">
-  <button id="sendBtn" title="Send">➤</button>
-</div>
-
-<div id="gear">⚙</div>
 <div id="panel">
   <div id="panelHeader"><span>⠿ Settings</span><button id="panelClose" title="Close">✕</button></div>
   <div class="tabs">
     <button class="tabBtn active" data-tab="appearance">Appearance</button>
     <button class="tabBtn" data-tab="ai">AI</button>
     <button class="tabBtn" data-tab="system">System</button>
+    <button class="tabBtn" data-tab="help">Help</button>
   </div>
 
-  <!-- ===================== APPEARANCE TAB ===================== -->
   <div class="tabPanel active" id="tab-appearance">
     <div class="row">
       <label>Size <span class="val" id="sizeVal">100%</span></label>
@@ -73,11 +70,15 @@
       <div class="switch on" id="togglePhysics" data-key="physicsReactions"></div>
     </div>
     <div class="toggle-row">
-      <span>Walk / wander on its own</span>
-      <div class="switch" id="toggleWalk" data-key="walkEnabled"></div>
+      <span>Wander on its own</span>
+      <div class="switch" id="toggleWander"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Follow the cursor</span>
+      <div class="switch" id="toggleFollow"></div>
     </div>
     <div class="charActions" style="margin-bottom:10px;">
-      <button id="summonBtn" class="smallBtn">Summon to cursor</button>
+      <button id="comeHereBtn" class="smallBtn">Come here (walk to cursor once)</button>
     </div>
 
     <div class="row">
@@ -114,10 +115,9 @@
     </div>
   </div>
 
-  <!-- ===================== AI TAB ===================== -->
   <div class="tabPanel" id="tab-ai">
     <div class="row">
-      <label>Provider</label>
+      <label>Text AI provider</label>
       <select id="providerSelect">
         <option value="anthropic">Anthropic (Claude)</option>
         <option value="openai">OpenAI (GPT)</option>
@@ -127,11 +127,15 @@
     </div>
     <div class="row">
       <label>Model <span class="dim">(blank = provider default)</span></label>
-      <input type="text" id="modelInput" placeholder="e.g. claude-sonnet-4-6">
+      <input type="text" id="modelInput" list="modelList" placeholder="e.g. claude-sonnet-4-6">
+      <datalist id="modelList"></datalist>
     </div>
     <div class="row" id="apiKeyRow">
-      <label>API key for selected provider</label>
-      <input type="password" id="apiKeyInput" placeholder="sk-... / API key">
+      <label>Text AI API key</label>
+      <div class="charActions">
+        <input type="password" id="apiKeyInput" placeholder="sk-... / API key" style="flex:3;">
+        <button id="setApiKeyBtn" class="smallBtn">Set</button>
+      </div>
       <div id="apiKeyStatus" class="dim" style="margin-top:4px;"></div>
     </div>
 
@@ -146,8 +150,12 @@
     </div>
 
     <div class="toggle-row">
-      <span>Contextual idle chatter (uses AI)</span>
+      <span>Contextual idle chatter (text)</span>
       <div class="switch on" id="toggleChatter" data-key="chatterEnabled"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Speak idle chatter out loud</span>
+      <div class="switch" id="toggleIdleVoice" data-key="idleVoiceEnabled"></div>
     </div>
     <div class="toggle-row">
       <span>Persistent memory (remembers chats)</span>
@@ -157,18 +165,43 @@
       <button id="clearMemoryBtn" class="smallBtn danger">Clear memory</button>
     </div>
 
+    <div class="row" id="browserVoiceRow">
+      <label>Browser voice</label>
+      <select id="browserVoiceSelect"><option value="">Loading voices...</option></select>
+      <div class="dim" style="margin-top:4px; font-size:10px;">Used when "Real voice" is off. Available voices depend on your OS.</div>
+    </div>
+
     <div class="toggle-row">
       <span>Real voice (API TTS, better lip-sync)</span>
       <div class="switch" id="toggleTTS" data-key="ttsEnabled"></div>
     </div>
-    <div class="row" id="ttsRow" style="display:none;">
-      <label>TTS provider / voice</label>
-      <select id="ttsProviderSelect">
-        <option value="openai">OpenAI TTS</option>
-        <option value="elevenlabs">ElevenLabs</option>
-      </select>
-      <input type="text" id="ttsVoiceInput" placeholder="voice (e.g. nova / voice id)" style="margin-top:6px;">
-      <input type="password" id="elevenKeyInput" placeholder="ElevenLabs API key (if used)" style="margin-top:6px;">
+    <div id="ttsRow" style="display:none;">
+      <div class="row">
+        <label>Voice provider</label>
+        <select id="ttsProviderSelect">
+          <option value="openai">OpenAI TTS</option>
+          <option value="elevenlabs">ElevenLabs</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Voice</label>
+        <select id="ttsVoiceSelect"></select>
+        <input type="text" id="ttsVoiceCustom" placeholder="or paste a custom voice id" style="margin-top:6px;">
+      </div>
+      <div class="row" id="elevenKeyRow">
+        <label>Voice AI API key (ElevenLabs)</label>
+        <div class="charActions">
+          <input type="password" id="elevenKeyInput" placeholder="ElevenLabs API key" style="flex:3;">
+          <button id="setVoiceKeyBtn" class="smallBtn">Set</button>
+        </div>
+        <div id="voiceKeyStatus" class="dim" style="margin-top:4px;"></div>
+      </div>
+      <div class="row dim" style="font-size:10px; line-height:1.5;">
+        OpenAI TTS reuses your OpenAI text key above. ElevenLabs needs its own key here.
+      </div>
+      <div class="charActions" style="margin-bottom:10px;">
+        <button id="testVoiceBtn" class="smallBtn">Test voice</button>
+      </div>
     </div>
 
     <div class="toggle-row">
@@ -177,11 +210,10 @@
     </div>
 
     <div class="row dim" style="font-size:10px; line-height:1.5;">
-      Chat runs from the app's main process, not the browser, so your key never appears in devtools network calls. Keys are stored locally in plain form — fine for a personal machine, not a hardened vault. Ollama needs <b>ollama.com</b> running locally with a model pulled.
+      Chat runs from the app's main process, not the browser, so your key never appears in devtools network calls. Keys are stored locally in plain form — fine for a personal machine, not a hardened vault.
     </div>
   </div>
 
-  <!-- ===================== SYSTEM TAB ===================== -->
   <div class="tabPanel" id="tab-system">
     <div class="toggle-row">
       <span>Always on top</span>
@@ -227,6 +259,36 @@
     </div>
 
     <button id="quitBtn">Quit Companion</button>
+  </div>
+
+  <div class="tabPanel" id="tab-help">
+    <h4 class="helpH">Getting AI working</h4>
+    <p class="helpP">Pick a provider in the <b>AI</b> tab and paste an API key. The model field auto-fills with a sensible default — change it from the dropdown if you like.</p>
+
+    <h4 class="helpH">Where to get API keys</h4>
+    <ul class="helpUl">
+      <li><b>Anthropic (Claude):</b> console.anthropic.com → API Keys</li>
+      <li><b>OpenAI (GPT):</b> platform.openai.com → API keys</li>
+      <li><b>Google (Gemini):</b> aistudio.google.com → Get API key</li>
+      <li><b>ElevenLabs (voice):</b> elevenlabs.io → Profile → API key</li>
+    </ul>
+
+    <h4 class="helpH">Free / offline option (Ollama)</h4>
+    <p class="helpP">Install from <b>ollama.com</b>, then in a terminal run <code>ollama pull llama3.2</code> (or <code>llama3.2-vision</code> for the Vision feature). Choose <b>Ollama</b> as the provider and hit <b>Test</b>. No key, fully local and private.</p>
+
+    <h4 class="helpH">Where to get characters (VRM models)</h4>
+    <ul class="helpUl">
+      <li><b>VRoid Hub</b> — hub.vroid.com (many free, check licenses)</li>
+      <li><b>VRoid Studio</b> — make your own free custom model</li>
+      <li><b>Booth.pm</b> — search 無料 (free) VRM models</li>
+    </ul>
+    <p class="helpP">Add one by dropping a <b>.zip containing a .vrm</b> onto the box in the Appearance tab.</p>
+
+    <h4 class="helpH">Moving the character</h4>
+    <p class="helpP">Drag the character (or the ⠿ handle) to move it. In Appearance, turn on <b>Wander</b> to let it roam, <b>Follow the cursor</b> to chase your mouse, or click <b>Come here</b> to call it over once.</p>
+
+    <h4 class="helpH">Handy</h4>
+    <p class="helpP">Global hotkey <b>Alt+Shift+L</b> shows/hides it anywhere. The 👁 button (with Vision on) lets it look at your screen.</p>
   </div>
 </div>
 

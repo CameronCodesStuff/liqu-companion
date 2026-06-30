@@ -1,6 +1,6 @@
 {
   "name": "liqu-desktop-companion",
-  "version": "3.0.0",
+  "version": "3.4.0",
   "description": "A transparent, always-on-top 3D VRM desktop companion built with Electron and three.js",
   "main": "src/main.js",
   "author": "CameronCodesStuff",

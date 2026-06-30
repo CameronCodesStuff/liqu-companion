@@ -23,16 +23,19 @@ const store = new Store({
     openAtLogin: false,
     aiProvider: 'anthropic',
     aiModel: '',
-    apiKeys: {}, // { anthropic, openai, google, elevenlabs }
+    apiKeys: {},
     ollamaUrl: 'http://localhost:11434',
     ollamaModel: 'llama3.2',
     memoryEnabled: false,
-    chatMemory: [],         // rolling list of {role, content} summaries
-    ttsEnabled: false,      // real API TTS (ElevenLabs/OpenAI) vs browser speech
-    ttsProvider: 'openai',  // 'openai' | 'elevenlabs'
+    chatMemory: [],
+    ttsEnabled: false,
+    idleVoiceEnabled: false,
+    ttsProvider: 'openai',
     ttsVoice: '',
+    browserVoice: '',
     visionEnabled: false,
     walkEnabled: false,
+    moveMode: 'off',
     physicsReactions: true,
     idleVariation: true,
     eyeTracking: true,
@@ -42,34 +45,23 @@ const store = new Store({
 let mainWindow = null;
 let tray = null;
 
-const WINDOW_WIDTH = 420;
-const WINDOW_HEIGHT = 600;
-const SNAP_MARGIN = 40; // px from a screen edge that triggers snapping
-
-// Bundled models ship read-only inside the app; imported ones go in userData so they
-// survive updates/reinstalls and the app folder never needs write access.
 const BUNDLED_MODEL_DIR = path.join(__dirname, '..', 'assets', 'model');
 let IMPORTED_MODEL_DIR;
 
 function createWindow() {
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-
-  const savedX = store.get('windowX');
-  const savedY = store.get('windowY');
-  const x = Number.isFinite(savedX) ? savedX : screenWidth - WINDOW_WIDTH - 40;
-  const y = Number.isFinite(savedY) ? savedY : screenHeight - WINDOW_HEIGHT - 40;
+  const { width: screenWidth, height: screenHeight, x: waX, y: waY } = primaryDisplay.workArea;
 
   mainWindow = new BrowserWindow({
-    width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT,
-    x,
-    y,
+    width: screenWidth,
+    height: screenHeight,
+    x: waX,
+    y: waY,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: false,
-    resizable: true,
+    resizable: false,
     hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -80,15 +72,9 @@ function createWindow() {
 
   mainWindow.setAlwaysOnTop(store.get('alwaysOnTop'), 'screen-saver');
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  mainWindow.setIgnoreMouseEvents(store.get('clickThrough'), { forward: true });
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-
-  mainWindow.on('moved', () => {
-    const [px, py] = mainWindow.getPosition();
-    store.set('windowX', px);
-    store.set('windowY', py);
-  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -127,8 +113,7 @@ function createTray() {
       label: 'Reset position',
       click: () => {
         if (!mainWindow) return;
-        const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-        mainWindow.setPosition(width - WINDOW_WIDTH - 40, height - WINDOW_HEIGHT - 40);
+        mainWindow.webContents.send('char:reset-position');
       },
     },
     { type: 'separator' },
@@ -146,7 +131,6 @@ function toggleVisibility() {
   mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
 }
 
-// ---- IPC: window / settings basics ----
 ipcMain.handle('settings:set-click-through', (_evt, value) => {
   store.set('clickThrough', value);
   if (mainWindow) mainWindow.setIgnoreMouseEvents(value, { forward: true });
@@ -154,12 +138,6 @@ ipcMain.handle('settings:set-click-through', (_evt, value) => {
   return value;
 });
 
-// While click-through is ON, the whole window ignores the mouse — which would
-// otherwise make it impossible to click the gear/settings to turn it back off.
-// The renderer calls this to momentarily re-capture the mouse whenever the
-// cursor is over an interactive element (gear or open panel), then releases it
-// again on mouse-out. forward:true keeps move events flowing so hover detection
-// in the renderer still works even while ignoring clicks.
 ipcMain.handle('window:set-ignore-mouse', (_evt, ignore) => {
   if (mainWindow) mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
 });
@@ -171,36 +149,8 @@ ipcMain.handle('settings:set-always-on-top', (_evt, value) => {
   return value;
 });
 
-ipcMain.handle('window:drag-move', (_evt, { dx, dy }) => {
-  if (!mainWindow) return;
-  const [x, y] = mainWindow.getPosition();
-  mainWindow.setPosition(x + dx, y + dy);
-});
-
-// Called when the user releases a drag — snaps the window to the nearest
-// screen edge/corner if it's within SNAP_MARGIN px, like a real desktop pet.
-ipcMain.handle('window:drag-end', () => {
-  if (!mainWindow) return;
-  const [x, y] = mainWindow.getPosition();
-  const [w, h] = mainWindow.getSize();
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-
-  let nx = x;
-  let ny = y;
-
-  if (x < SNAP_MARGIN) nx = 0;
-  else if (x + w > sw - SNAP_MARGIN) nx = sw - w;
-
-  if (y < SNAP_MARGIN) ny = 0;
-  else if (y + h > sh - SNAP_MARGIN) ny = sh - h;
-
-  if (nx !== x || ny !== y) mainWindow.setPosition(nx, ny);
-  return { x: nx, y: ny };
-});
-
 ipcMain.handle('app:quit', () => app.quit());
 
-// ---- Open on system startup (native, cross-platform via Electron) ----
 ipcMain.handle('startup:get', () => {
   try {
     return app.getLoginItemSettings().openAtLogin;
@@ -218,14 +168,15 @@ ipcMain.handle('startup:set', (_evt, enabled) => {
   }
 });
 
-// ---- IPC: generic settings persistence (electron-store) ----
 ipcMain.handle('settings:get-all', () => store.store);
 ipcMain.handle('settings:set', (_evt, { key, value }) => {
   store.set(key, value);
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.webContents.send('settings:changed', { key, value });
+  }
   return true;
 });
 
-// ---- IPC: character library ----
 ipcMain.handle('characters:list', () => {
   const list = [];
 
@@ -235,7 +186,7 @@ ipcMain.handle('characters:list', () => {
         list.push({ id: `bundled:${f}`, label: f.replace(/\.vrm$/i, ''), source: 'bundled', file: f });
       }
     }
-  } catch (e) { /* dir always exists in packaged builds */ }
+  } catch (e) {  }
 
   try {
     for (const f of fs.readdirSync(IMPORTED_MODEL_DIR)) {
@@ -243,7 +194,7 @@ ipcMain.handle('characters:list', () => {
         list.push({ id: `imported:${f}`, label: f.replace(/\.vrm$/i, ''), source: 'imported', file: f });
       }
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {  }
 
   return list;
 });
@@ -251,7 +202,7 @@ ipcMain.handle('characters:list', () => {
 ipcMain.handle('characters:get-path', (_evt, id) => {
   const [source, file] = String(id).split(':');
   const dir = source === 'imported' ? IMPORTED_MODEL_DIR : BUNDLED_MODEL_DIR;
-  const fullPath = path.join(dir, path.basename(file)); // basename guards against path traversal
+  const fullPath = path.join(dir, path.basename(file));
   return 'file://' + fullPath.replace(/\\/g, '/');
 });
 
@@ -304,16 +255,8 @@ ipcMain.handle('characters:rename', (_evt, { id, newLabel }) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// AI chat proxy. Runs from the MAIN process (not the renderer) on purpose:
-// it sidesteps browser CORS restrictions entirely, and keeps API keys out of
-// the renderer's devtools/network tab. Keys are stored locally via
-// electron-store — note this is plaintext-on-disk storage suitable for a
-// personal local app, not a hardened secrets vault.
-// ---------------------------------------------------------------------------
 async function callAnthropic(apiKey, model, messages, system, image) {
-  // messages may include an image (base64 PNG, no data: prefix) attached to
-  // the latest user turn for vision.
+
   const apiMessages = messages.map((m) => ({ role: m.role, content: m.content }));
   if (image && apiMessages.length) {
     const last = apiMessages[apiMessages.length - 1];
@@ -392,9 +335,6 @@ async function callGoogle(apiKey, model, messages, system, image) {
   return data.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n').trim() || '';
 }
 
-// Local, offline, free LLM via Ollama (https://ollama.com). No API key — talks
-// to a locally-running Ollama server. Vision works if the chosen model is a
-// vision model (e.g. llava, llama3.2-vision).
 async function callOllama(baseUrl, model, messages, system, image) {
   const apiMessages = [{ role: 'system', content: system }, ...messages.map((m) => ({ role: m.role, content: m.content }))];
   if (image && apiMessages.length) {
@@ -432,7 +372,6 @@ ipcMain.handle('ai:chat', async (_evt, { provider, model, messages, system, imag
   }
 });
 
-// Check whether a local Ollama server is reachable, for the settings UI.
 ipcMain.handle('ai:check-ollama', async () => {
   try {
     const res = await fetch(`${store.get('ollamaUrl').replace(/\/$/, '')}/api/tags`);
@@ -444,20 +383,10 @@ ipcMain.handle('ai:check-ollama', async () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Persistent memory. Stores a rolling list of conversation turns/summaries in
-// electron-store so the companion "remembers" across restarts. We cap it and,
-// when it grows large, ask the model to compress older turns into a summary.
-// ---------------------------------------------------------------------------
 ipcMain.handle('memory:get', () => store.get('chatMemory') || []);
 ipcMain.handle('memory:set', (_evt, mem) => { store.set('chatMemory', mem || []); return true; });
 ipcMain.handle('memory:clear', () => { store.set('chatMemory', []); return true; });
 
-// ---------------------------------------------------------------------------
-// Real TTS via API → returns actual audio bytes (base64) so the renderer can
-// play it AND run amplitude analysis on it for true lip-sync. Falls back to
-// browser speech in the renderer if this isn't enabled / has no key.
-// ---------------------------------------------------------------------------
 ipcMain.handle('tts:speak', async (_evt, { text }) => {
   try {
     const apiKeys = store.get('apiKeys') || {};
@@ -466,7 +395,7 @@ ipcMain.handle('tts:speak', async (_evt, { text }) => {
     if (provider === 'elevenlabs') {
       const key = apiKeys.elevenlabs;
       if (!key) return { ok: false, error: 'No ElevenLabs API key set.' };
-      const voice = store.get('ttsVoice') || '21m00Tcm4TlvDq8ikWAM'; // default "Rachel"
+      const voice = store.get('ttsVoice') || '21m00Tcm4TlvDq8ikWAM';
       const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'xi-api-key': key },
@@ -477,7 +406,6 @@ ipcMain.handle('tts:speak', async (_evt, { text }) => {
       return { ok: true, audio: buf.toString('base64'), mime: 'audio/mpeg' };
     }
 
-    // default: OpenAI TTS
     const key = apiKeys.openai;
     if (!key) return { ok: false, error: 'No OpenAI API key set.' };
     const res = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -493,11 +421,6 @@ ipcMain.handle('tts:speak', async (_evt, { text }) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Vision: capture the primary screen so the companion can "look" at what's on
-// it. Returns a base64 PNG. (Region cropping is done in the renderer from the
-// selection rectangle; here we grab the full screen at reduced size.)
-// ---------------------------------------------------------------------------
 ipcMain.handle('vision:capture', async () => {
   try {
     const primary = screen.getPrimaryDisplay();
@@ -514,15 +437,6 @@ ipcMain.handle('vision:capture', async () => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// System awareness — honest scope note: detecting "a long-running terminal
-// command finished" or reading true battery state generically (without an
-// extra native dependency we can't verify in this environment) isn't
-// reliably doable cross-platform. What's implemented for real below:
-//   - CPU load monitoring via Node's built-in `os` module (no native deps)
-//   - Clipboard watching via Electron's built-in clipboard module
-// Both are off by default and only run when the renderer enables them.
-// ---------------------------------------------------------------------------
 let clipboardWatchInterval = null;
 let lastClipboardText = '';
 
@@ -545,16 +459,13 @@ ipcMain.handle('system:set-watch-clipboard', (_evt, enabled) => {
 let cpuWarnInterval = null;
 function startCpuMonitor() {
   cpuWarnInterval = setInterval(() => {
-    const load = os.loadavg()[0] / os.cpus().length; // normalized 1-minute load
+    const load = os.loadavg()[0] / os.cpus().length;
     if (load > 0.9 && mainWindow) {
       mainWindow.webContents.send('system:cpu-warning', Math.round(load * 100));
     }
   }, 15000);
 }
 
-// Broadcasts the OS cursor position relative to the window center, normalized
-// to screen size, so the renderer can make the character's eyes/head track
-// the mouse anywhere on the desktop — not just inside the small companion window.
 let cursorInterval = null;
 function startCursorTracking() {
   cursorInterval = setInterval(() => {
@@ -571,7 +482,68 @@ function startCursorTracking() {
   }, 50);
 }
 
-// ---- lifecycle ----
+let moveMode = 'off';
+let moveInterval = null;
+let wanderTarget = null;
+let wanderRepathAt = 0;
+let charScreenX = -1, charScreenY = -1;
+
+function startMovementEngine() {
+  moveInterval = setInterval(() => {
+    if (!mainWindow || !mainWindow.isVisible() || moveMode === 'off') return;
+
+    const wa = screen.getPrimaryDisplay().workArea;
+    if (charScreenX < 0) {
+      charScreenX = wa.width - 440;
+      charScreenY = wa.height - 580;
+    }
+
+    let targetX, targetY, stopDist;
+    if (moveMode === 'follow') {
+      const { x: cx, y: cy } = screen.getCursorScreenPoint();
+      targetX = cx - wa.x - 200;
+      targetY = cy - wa.y - 270;
+      stopDist = 120;
+    } else {
+      const now = Date.now();
+      if (!wanderTarget || now > wanderRepathAt) {
+        const margin = 80;
+        const edge = Math.floor(Math.random() * 4);
+        wanderTarget =
+          edge === 0 ? { x: Math.random() * (wa.width - 400), y: margin } :
+          edge === 1 ? { x: wa.width - 440, y: Math.random() * (wa.height - 540) } :
+          edge === 2 ? { x: Math.random() * (wa.width - 400), y: wa.height - 580 } :
+                       { x: margin, y: Math.random() * (wa.height - 540) };
+        wanderRepathAt = now + 6000 + Math.random() * 6000;
+      }
+      targetX = wanderTarget.x; targetY = wanderTarget.y; stopDist = 24;
+    }
+
+    const dx = targetX - charScreenX;
+    const dy = targetY - charScreenY;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist <= stopDist) {
+      mainWindow.webContents.send('move:state', { moving: false, dirX: 0 });
+      if (moveMode === 'wander') wanderTarget = null;
+      return;
+    }
+
+    const speed = Math.min(6, dist * 0.08);
+    charScreenX += (dx / dist) * speed;
+    charScreenY += (dy / dist) * speed;
+    mainWindow.webContents.send('move:pos', { x: Math.round(charScreenX), y: Math.round(charScreenY) });
+    mainWindow.webContents.send('move:state', { moving: true, dirX: Math.sign(dx) });
+  }, 30);
+}
+
+ipcMain.handle('move:set-mode', (_evt, mode) => {
+  moveMode = ['wander', 'follow'].includes(mode) ? mode : 'off';
+  wanderTarget = null;
+  if (mainWindow && moveMode === 'off') mainWindow.webContents.send('move:state', { moving: false, dirX: 0 });
+  return moveMode;
+});
+
 app.whenReady().then(() => {
   IMPORTED_MODEL_DIR = path.join(app.getPath('userData'), 'characters');
   fs.mkdirSync(IMPORTED_MODEL_DIR, { recursive: true });
@@ -580,6 +552,8 @@ app.whenReady().then(() => {
   createTray();
   startCpuMonitor();
   startCursorTracking();
+  startMovementEngine();
+  moveMode = ['wander', 'follow'].includes(store.get('moveMode')) ? store.get('moveMode') : 'off';
 
   globalShortcut.register('Alt+Shift+L', () => toggleVisibility());
 
@@ -593,6 +567,7 @@ app.on('will-quit', () => {
   clearInterval(clipboardWatchInterval);
   clearInterval(cpuWarnInterval);
   clearInterval(cursorInterval);
+  clearInterval(moveInterval);
 });
 
 app.on('window-all-closed', () => {
