@@ -1,4 +1,4 @@
-# Liqu Desktop Companion
+# Desktop Companion
 
 A transparent, always-on-top 3D desktop companion built with **Electron**, **three.js + @pixiv/three-vrm**, and an optional AI brain (Claude / GPT / Gemini). The character floats above your other windows, animates, reacts to your cursor, and can chat with you by text or voice.
 
