@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Liqu Companion</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="stage">
+  <div id="loading"><div>loading character</div><div class="bar"><i></i></div></div>
+  <div id="speechBubble"></div>
+</div>
+
+<div id="dragHandle" title="Drag me">⠿</div>
+
+<!-- Chat bar: always visible at the bottom, toggled to a full panel on click -->
+<div id="chatBar">
+  <button id="micBtn" title="Voice input">🎤</button>
+  <button id="visionBtn" title="Look at my screen">👁</button>
+  <input id="chatInput" type="text" placeholder="Say something...">
+  <button id="sendBtn" title="Send">➤</button>
+</div>
+
+<div id="gear">⚙</div>
+<div id="panel">
+  <div id="panelHeader"><span>⠿ Settings</span><button id="panelClose" title="Close">✕</button></div>
+  <div class="tabs">
+    <button class="tabBtn active" data-tab="appearance">Appearance</button>
+    <button class="tabBtn" data-tab="ai">AI</button>
+    <button class="tabBtn" data-tab="system">System</button>
+  </div>
+
+  <!-- ===================== APPEARANCE TAB ===================== -->
+  <div class="tabPanel active" id="tab-appearance">
+    <div class="row">
+      <label>Size <span class="val" id="sizeVal">100%</span></label>
+      <input type="range" id="sizeSlider" min="50" max="180" value="100">
+    </div>
+
+    <div class="row">
+      <label>Idle sway speed <span class="val" id="swayVal">1.0x</span></label>
+      <input type="range" id="swaySlider" min="0" max="200" value="100">
+    </div>
+
+    <div class="row">
+      <label>Behavior</label>
+      <select id="behaviorSelect">
+        <option value="idle">Idle / breathing</option>
+        <option value="wave">Greeting wave</option>
+        <option value="look">Look around</option>
+        <option value="wind">Wind gust</option>
+        <option value="sit">Sit / perch</option>
+        <option value="thinking">Thinking</option>
+        <option value="still">Freeze pose</option>
+      </select>
+    </div>
+
+    <div class="toggle-row">
+      <span>Auto-sleep when idle</span>
+      <div class="switch on" id="toggleAutoSleep" data-key="autoSleep"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Eye tracking (eyes follow cursor)</span>
+      <div class="switch on" id="toggleEyeTracking" data-key="eyeTracking"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Idle variation (drifts between poses)</span>
+      <div class="switch on" id="toggleIdleVariation" data-key="idleVariation"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Physics reactions (lean when flung)</span>
+      <div class="switch on" id="togglePhysics" data-key="physicsReactions"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Walk / wander on its own</span>
+      <div class="switch" id="toggleWalk" data-key="walkEnabled"></div>
+    </div>
+    <div class="charActions" style="margin-bottom:10px;">
+      <button id="summonBtn" class="smallBtn">Summon to cursor</button>
+    </div>
+
+    <div class="row">
+      <label>Expression</label>
+      <select id="expressionSelect">
+        <option value="neutral">Neutral</option>
+        <option value="happy">Happy</option>
+        <option value="relaxed">Relaxed</option>
+        <option value="sad">Sad</option>
+        <option value="angry">Angry</option>
+        <option value="surprised">Surprised</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Outfit / parts</label>
+      <div id="outfitList" class="scrollList"><span class="dim">Load a character to see parts</span></div>
+    </div>
+
+    <div class="row">
+      <label>Character</label>
+      <select id="characterSelect"></select>
+      <div class="charActions">
+        <button id="renameBtn" class="smallBtn">Rename</button>
+        <button id="deleteBtn" class="smallBtn danger">Delete</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>Add character (.zip containing a .vrm)</label>
+      <div id="dropZone">Drop a .zip here<br>or click to browse</div>
+      <input type="file" id="zipInput" accept=".zip" hidden>
+      <div id="importStatus"></div>
+    </div>
+  </div>
+
+  <!-- ===================== AI TAB ===================== -->
+  <div class="tabPanel" id="tab-ai">
+    <div class="row">
+      <label>Provider</label>
+      <select id="providerSelect">
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="openai">OpenAI (GPT)</option>
+        <option value="google">Google (Gemini)</option>
+        <option value="ollama">Ollama (local, offline, free)</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>Model <span class="dim">(blank = provider default)</span></label>
+      <input type="text" id="modelInput" placeholder="e.g. claude-sonnet-4-6">
+    </div>
+    <div class="row" id="apiKeyRow">
+      <label>API key for selected provider</label>
+      <input type="password" id="apiKeyInput" placeholder="sk-... / API key">
+      <div id="apiKeyStatus" class="dim" style="margin-top:4px;"></div>
+    </div>
+
+    <div class="row" id="ollamaRow" style="display:none;">
+      <label>Ollama server URL</label>
+      <input type="text" id="ollamaUrlInput" placeholder="http://localhost:11434">
+      <div class="charActions">
+        <input type="text" id="ollamaModelInput" placeholder="model e.g. llama3.2" style="flex:2;">
+        <button id="ollamaCheckBtn" class="smallBtn">Test</button>
+      </div>
+      <div id="ollamaStatus" class="dim" style="margin-top:4px;"></div>
+    </div>
+
+    <div class="toggle-row">
+      <span>Contextual idle chatter (uses AI)</span>
+      <div class="switch on" id="toggleChatter" data-key="chatterEnabled"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Persistent memory (remembers chats)</span>
+      <div class="switch" id="toggleMemory" data-key="memoryEnabled"></div>
+    </div>
+    <div class="charActions" style="margin-bottom:10px;">
+      <button id="clearMemoryBtn" class="smallBtn danger">Clear memory</button>
+    </div>
+
+    <div class="toggle-row">
+      <span>Real voice (API TTS, better lip-sync)</span>
+      <div class="switch" id="toggleTTS" data-key="ttsEnabled"></div>
+    </div>
+    <div class="row" id="ttsRow" style="display:none;">
+      <label>TTS provider / voice</label>
+      <select id="ttsProviderSelect">
+        <option value="openai">OpenAI TTS</option>
+        <option value="elevenlabs">ElevenLabs</option>
+      </select>
+      <input type="text" id="ttsVoiceInput" placeholder="voice (e.g. nova / voice id)" style="margin-top:6px;">
+      <input type="password" id="elevenKeyInput" placeholder="ElevenLabs API key (if used)" style="margin-top:6px;">
+    </div>
+
+    <div class="toggle-row">
+      <span>Vision (let her see your screen)</span>
+      <div class="switch" id="toggleVision" data-key="visionEnabled"></div>
+    </div>
+
+    <div class="row dim" style="font-size:10px; line-height:1.5;">
+      Chat runs from the app's main process, not the browser, so your key never appears in devtools network calls. Keys are stored locally in plain form — fine for a personal machine, not a hardened vault. Ollama needs <b>ollama.com</b> running locally with a model pulled.
+    </div>
+  </div>
+
+  <!-- ===================== SYSTEM TAB ===================== -->
+  <div class="tabPanel" id="tab-system">
+    <div class="toggle-row">
+      <span>Always on top</span>
+      <div class="switch on" id="toggleTop"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Click-through desktop</span>
+      <div class="switch" id="toggleClickThrough"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Watch clipboard (opt-in)</span>
+      <div class="switch" id="toggleClipboard"></div>
+    </div>
+    <div class="toggle-row">
+      <span>CPU load warnings</span>
+      <div class="switch on" id="toggleCpuWarn" data-key="cpuWarnEnabled"></div>
+    </div>
+    <div class="toggle-row">
+      <span>Hide everything but the character</span>
+      <div class="switch" id="toggleMinimal" data-key="minimalMode"></div>
+    </div>
+    <div class="row dim" style="font-size:10px; line-height:1.5;">
+      Hides the chat bar, drag handle, and speech bubbles. The gear icon fades to nearly invisible — hover the bottom-right corner to bring it back and turn this off.
+    </div>
+
+    <div class="row">
+      <label>Voice volume <span class="val" id="volVal">80%</span></label>
+      <input type="range" id="volSlider" min="0" max="100" value="80">
+    </div>
+    <div class="toggle-row">
+      <span>Mute</span>
+      <div class="switch" id="toggleMute"></div>
+    </div>
+
+    <div class="toggle-row">
+      <span>Open on system startup</span>
+      <div class="switch" id="toggleStartup"></div>
+    </div>
+
+    <div class="row dim" style="font-size:10px; line-height:1.5;">
+      Global hotkey <b>Alt+Shift+L</b> shows/hides the companion from anywhere.
+      Dragging near a screen edge snaps the window to it.
+    </div>
+
+    <button id="quitBtn">Quit Companion</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@2.1.1/lib/three-vrm.module.js",
+    "jszip": "https://esm.sh/jszip@3.10.1"
+  }
+}
+</script>
+<script type="module" src="companion.js"></script>
+</body>
+</html>

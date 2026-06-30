@@ -1,0 +1,61 @@
+{
+  "name": "liqu-desktop-companion",
+  "version": "3.0.0",
+  "description": "A transparent, always-on-top 3D VRM desktop companion built with Electron and three.js",
+  "main": "src/main.js",
+  "author": "CameronCodesStuff",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.cameroncodesstuff.liqucompanion",
+    "productName": "Liqu Companion",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icons/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "menuCategory": "Liqu",
+      "shortcutName": "Liqu Companion",
+      "uninstallDisplayName": "Liqu Companion"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icons/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "assets/icons/icon.png",
+      "category": "Utility"
+    }
+  }
+}
