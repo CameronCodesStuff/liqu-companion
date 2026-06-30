@@ -2,11 +2,10 @@
 
 A transparent, always-on-top 3D desktop companion built with **Electron** and **three.js + [@pixiv/three-vrm](https://github.com/pixiv/three-vrm)**. A VRM character floats above your windows, animates naturally, reacts to your cursor, can walk around your screen, and can talk with you by text or voice through your choice of AI provider — including a fully offline option.
 
-<p align="center">
-  <img src="assets/screenshots/character-idle.gif" alt="Character idle animation" height="340">
-  &nbsp;&nbsp;&nbsp;
-  <img src="assets/screenshots/desktop-overlay.gif" alt="Transparent desktop overlay" height="340">
-</p>
+<table align="center"><tr>
+<td><img src="assets/screenshots/character-idle.gif" alt="Character idle animation" height="340"></td>
+<td><img src="assets/screenshots/desktop-overlay.gif" alt="Transparent desktop overlay" height="340"></td>
+</tr></table>
 
 > Bring your own VRM model and (optionally) an AI API key or a local Ollama install.
 
