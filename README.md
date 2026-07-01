@@ -7,7 +7,7 @@ A transparent, always-on-top 3D desktop companion built with **Electron** and **
 <td><img src="assets/screenshots/desktop-overlay-cropped.gif" alt="Transparent desktop overlay" height="340"></td>
 </tr></table>
 
-> Bring your own VRM model and (optionally) an AI API key or a local Ollama install.
+> Bring your own VRM model (or use the pre installed one) and (optionally) an AI API key or a local Ollama install.
 
 ## Features
 
