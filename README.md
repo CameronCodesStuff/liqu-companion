@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/icons/logo.png" alt="Liqu Companion" width="100">
-</p>
-
 # Liqu Desktop Companion
 
 A transparent, always-on-top 3D desktop companion built with **Electron** and **three.js + [@pixiv/three-vrm](https://github.com/pixiv/three-vrm)**. A VRM character floats above your windows, animates naturally, reacts to your cursor, can walk around your screen, and can talk with you by text or voice through your choice of AI provider — including a fully offline option.
