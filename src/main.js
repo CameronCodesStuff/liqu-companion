@@ -182,16 +182,16 @@ ipcMain.handle('characters:list', () => {
 
   try {
     for (const f of fs.readdirSync(BUNDLED_MODEL_DIR)) {
-      if (f.toLowerCase().endsWith('.vrm')) {
-        list.push({ id: `bundled:${f}`, label: f.replace(/\.vrm$/i, ''), source: 'bundled', file: f });
+      if ((/\.(vrm|glb|gltf|fbx|obj)$/i).test(f)) {
+        list.push({ id: `bundled:${f}`, label: f.replace(/\.(vrm|glb|gltf|fbx|obj)$/i, ''), source: 'bundled', file: f });
       }
     }
   } catch (e) {  }
 
   try {
     for (const f of fs.readdirSync(IMPORTED_MODEL_DIR)) {
-      if (f.toLowerCase().endsWith('.vrm')) {
-        list.push({ id: `imported:${f}`, label: f.replace(/\.vrm$/i, ''), source: 'imported', file: f });
+      if ((/\.(vrm|glb|gltf|fbx|obj)$/i).test(f)) {
+        list.push({ id: `imported:${f}`, label: f.replace(/\.(vrm|glb|gltf|fbx|obj)$/i, ''), source: 'imported', file: f });
       }
     }
   } catch (e) {  }
@@ -209,17 +209,17 @@ ipcMain.handle('characters:get-path', (_evt, id) => {
 ipcMain.handle('characters:import', (_evt, { filename, data }) => {
   try {
     let safeName = path.basename(filename).replace(/[^a-zA-Z0-9_\-. ]/g, '_');
-    if (!safeName.toLowerCase().endsWith('.vrm')) safeName += '.vrm';
+    if (!(/\.(vrm|glb|gltf|fbx|obj)$/i).test(safeName)) safeName += '.vrm';
 
     let finalName = safeName;
     let counter = 1;
     while (fs.existsSync(path.join(IMPORTED_MODEL_DIR, finalName))) {
-      finalName = safeName.replace(/\.vrm$/i, `_${counter}.vrm`);
+      const extMatch = safeName.match(/\.[a-z]+$/i) || ['.vrm']; finalName = safeName.replace(/\.[a-z]+$/i, `_${counter}${extMatch[0]}`);
       counter++;
     }
 
     fs.writeFileSync(path.join(IMPORTED_MODEL_DIR, finalName), Buffer.from(data));
-    return { ok: true, id: `imported:${finalName}`, label: finalName.replace(/\.vrm$/i, '') };
+    return { ok: true, id: `imported:${finalName}`, label: finalName.replace(/\.[a-z]+$/i, '') };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }
@@ -242,14 +242,14 @@ ipcMain.handle('characters:rename', (_evt, { id, newLabel }) => {
     if (source !== 'imported') return { ok: false, error: 'Only imported characters can be renamed.' };
     const safeLabel = String(newLabel).replace(/[^a-zA-Z0-9_\- ]/g, '_').trim();
     if (!safeLabel) return { ok: false, error: 'Invalid name.' };
-    let newFile = safeLabel + '.vrm';
+    const origExt = (path.extname(file) || '.vrm').toLowerCase(); let newFile = safeLabel + origExt;
     let counter = 1;
     while (fs.existsSync(path.join(IMPORTED_MODEL_DIR, newFile)) && newFile !== file) {
-      newFile = `${safeLabel}_${counter}.vrm`;
+      newFile = `${safeLabel}_${counter}${origExt}`;
       counter++;
     }
     fs.renameSync(path.join(IMPORTED_MODEL_DIR, path.basename(file)), path.join(IMPORTED_MODEL_DIR, newFile));
-    return { ok: true, id: `imported:${newFile}`, label: newFile.replace(/\.vrm$/i, '') };
+    return { ok: true, id: `imported:${newFile}`, label: newFile.replace(/\.[a-z]+$/i, '') };
   } catch (e) {
     return { ok: false, error: String(e && e.message ? e.message : e) };
   }

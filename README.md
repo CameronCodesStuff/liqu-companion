@@ -1,17 +1,24 @@
+<p align="center">
+  <img src="assets/icons/logo.png" alt="Liqu Companion" width="100">
+</p>
+
 # Liqu Desktop Companion
 
 A transparent, always-on-top 3D desktop companion built with **Electron** and **three.js + [@pixiv/three-vrm](https://github.com/pixiv/three-vrm)**. A VRM character floats above your windows, animates naturally, reacts to your cursor, can walk around your screen, and can talk with you by text or voice through your choice of AI provider — including a fully offline option.
 
 <table align="center"><tr>
 <td><img src="assets/screenshots/character-idle.gif" alt="Character idle animation" height="340"></td>
-<td><img src="assets/screenshots/desktop-overlay-cropped.gif" alt="Transparent desktop overlay" height="340"></td>
+<td><img src="assets/screenshots/desktop-overlay.gif" alt="Transparent desktop overlay" height="340"></td>
 </tr></table>
 
-> Bring your own VRM model (or use the pre installed one) and (optionally) an AI API key or a local Ollama install.
+> Bring your own VRM model and (optionally) an AI API key or a local Ollama install.
 
 ## Features
 
 **Character & animation**
+- Supports **VRM, GLTF/GLB, FBX, and OBJ** model formats — drop any of them in directly or inside a zip
+- VRM models get full support: expressions, eye tracking, spring-bone wind, blend shapes
+- Other formats load, render, and auto-frame correctly; VRM-specific features gracefully degrade
 - Frameless, transparent, always-on-top window
 - Natural procedural animation: layered breathing, weight shifting, per-bone follow-through, and quaternion-based pose blending (no rigid snapping)
 - 28 selectable poses/behaviors (wave, sit, dance, think, stretch, walk, and more)

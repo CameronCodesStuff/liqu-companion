@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Liqu Companion</title>
+<link rel="icon" href="../../assets/icons/favicon.png" type="image/png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -108,9 +109,9 @@
     </div>
 
     <div class="row">
-      <label>Add character (.zip containing a .vrm)</label>
-      <div id="dropZone">Drop a .zip here<br>or click to browse</div>
-      <input type="file" id="zipInput" accept=".zip" hidden>
+      <label>Add character (.vrm, .glb, .fbx, .obj, or .zip)</label>
+      <div id="dropZone">Drop a model or .zip here<br>or click to browse</div>
+      <input type="file" id="zipInput" accept=".zip,.vrm,.glb,.gltf,.fbx,.obj" hidden>
       <div id="importStatus"></div>
     </div>
   </div>
@@ -282,7 +283,7 @@
       <li><b>VRoid Studio</b> — make your own free custom model</li>
       <li><b>Booth.pm</b> — search 無料 (free) VRM models</li>
     </ul>
-    <p class="helpP">Add one by dropping a <b>.zip containing a .vrm</b> onto the box in the Appearance tab.</p>
+    <p class="helpP">Add one by dropping a model file (<b>.vrm, .glb, .gltf, .fbx, .obj</b>) or a <b>.zip</b> containing one onto the box in the Appearance tab. VRM models get full expression/eye-tracking support; other formats render and animate but without VRM-specific features.</p>
 
     <h4 class="helpH">Moving the character</h4>
     <p class="helpP">Drag the character (or the ⠿ handle) to move it. In Appearance, turn on <b>Wander</b> to let it roam, <b>Follow the cursor</b> to chase your mouse, or click <b>Come here</b> to call it over once.</p>

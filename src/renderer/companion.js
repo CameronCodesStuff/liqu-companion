@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import JSZip from 'jszip';
 
@@ -43,35 +46,38 @@ let currentVrm = null;
 const modelGroup = new THREE.Group();
 scene.add(modelGroup);
 
-const loader = new GLTFLoader();
-loader.register((parser) => new VRMLoaderPlugin(parser));
+const gltfLoader = new GLTFLoader();
+gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
+const fbxLoader = new FBXLoader();
+const objLoader = new OBJLoader();
 
-function frameCamera(vrm) {
-  modelGroup.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(vrm.scene);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
+let isVrmModel = false;
 
-  const PADDING = 1.3;
-  const verticalFov = (camera.fov * Math.PI) / 180;
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
-  const distanceForHeight = (size.y * PADDING) / (2 * Math.tan(verticalFov / 2));
-  const distanceForWidth = (size.x * PADDING) / (2 * Math.tan(horizontalFov / 2));
-  const distance = Math.max(distanceForHeight, distanceForWidth, 0.5);
-
-  camera.position.set(center.x, center.y, center.z + distance);
-  camera.lookAt(center);
-  camera.near = Math.max(0.01, distance / 100);
-  camera.far = distance * 10;
-  camera.updateProjectionMatrix();
+function clearCurrentModel() {
+  if (currentVrm) {
+    try { VRMUtils.deepDispose(currentVrm.scene); } catch (e) {}
+    modelGroup.remove(currentVrm.scene);
+    currentVrm = null;
+  }
+  while (modelGroup.children.length) {
+    const child = modelGroup.children[0];
+    modelGroup.remove(child);
+    child.traverse?.((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+  isVrmModel = false;
 }
 
-function populateOutfitList(vrm) {
+function populateOutfitList(root) {
   outfitList.innerHTML = '';
   const meshes = [];
-  vrm.scene.traverse((obj) => {
+  const target = root.scene || root;
+  target.traverse((obj) => {
     if (obj.isMesh || obj.isSkinnedMesh) meshes.push(obj);
   });
   if (meshes.length === 0) {
@@ -92,46 +98,104 @@ function populateOutfitList(vrm) {
   });
 }
 
+function onModelLoaded(root, vrm) {
+  clearCurrentModel();
+  if (vrm) {
+    currentVrm = vrm;
+    isVrmModel = true;
+    VRMUtils.rotateVRM0(vrm);
+    modelGroup.add(vrm.scene);
+    if (vrm.lookAt) {
+      vrm.lookAt.target = lookAtTarget;
+      if (!lookAtTarget.parent) scene.add(lookAtTarget);
+    }
+  } else {
+    currentVrm = null;
+    isVrmModel = false;
+    root.traverse((o) => {
+      if (o.isMesh && o.material) {
+        if (Array.isArray(o.material)) o.material.forEach((m) => { m.side = THREE.DoubleSide; });
+        else o.material.side = THREE.DoubleSide;
+      }
+    });
+    modelGroup.add(root);
+  }
+  modelGroup.scale.setScalar(Number($('sizeSlider').value) / 100);
+  frameCameraFromGroup();
+  resetPoseImmediate();
+  populateOutfitList(currentVrm || { scene: modelGroup });
+  if (isVrmModel) applyExpression(currentExpression);
+  loadingEl.style.display = 'none';
+  queueChatter();
+}
+
+function frameCameraFromGroup() {
+  modelGroup.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(modelGroup);
+  if (box.isEmpty()) return;
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  const PADDING = 1.3;
+  const verticalFov = (camera.fov * Math.PI) / 180;
+  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+  const distanceForHeight = (size.y * PADDING) / (2 * Math.tan(verticalFov / 2));
+  const distanceForWidth = (size.x * PADDING) / (2 * Math.tan(horizontalFov / 2));
+  const distance = Math.max(distanceForHeight, distanceForWidth, 0.5);
+  camera.position.set(center.x, center.y, center.z + distance);
+  camera.lookAt(center);
+  camera.near = Math.max(0.01, distance / 100);
+  camera.far = distance * 10;
+  camera.updateProjectionMatrix();
+}
+
+function getExtension(url) {
+  const clean = url.split('?')[0].split('#')[0];
+  const dot = clean.lastIndexOf('.');
+  return dot >= 0 ? clean.substring(dot).toLowerCase() : '';
+}
+
 function loadModel(url) {
   loadingEl.style.display = 'flex';
-  loader.load(
-    url,
-    (gltf) => {
-      const vrm = gltf.userData.vrm;
-      if (currentVrm) {
-        VRMUtils.deepDispose(currentVrm.scene);
-        modelGroup.remove(currentVrm.scene);
-      }
-      currentVrm = vrm;
-      VRMUtils.rotateVRM0(vrm);
-      modelGroup.add(vrm.scene);
-      modelGroup.scale.setScalar(Number($('sizeSlider').value) / 100);
-      frameCamera(vrm);
-      resetPoseImmediate();
-      populateOutfitList(vrm);
-      applyExpression(currentExpression);
+  const ext = getExtension(url);
 
-      if (vrm.lookAt) {
-        vrm.lookAt.target = lookAtTarget;
-        if (!lookAtTarget.parent) scene.add(lookAtTarget);
-      }
+  if (ext === '.fbx') {
+    fbxLoader.load(url, (group) => onModelLoaded(group, null), undefined, (err) => {
       loadingEl.style.display = 'none';
-      queueChatter();
-    },
-    undefined,
-    (err) => {
+      console.error('FBX load error:', err);
+    });
+    return;
+  }
+
+  if (ext === '.obj') {
+    objLoader.load(url, (group) => onModelLoaded(group, null), undefined, (err) => {
       loadingEl.style.display = 'none';
-      console.error('Failed to load VRM model:', err);
-      setImportStatus('Failed to load that character — check the console for details.', 'err');
+      console.error('OBJ load error:', err);
+    });
+    return;
+  }
+
+  gltfLoader.load(url, (gltf) => {
+    const vrm = gltf.userData.vrm;
+    if (vrm) {
+      onModelLoaded(vrm.scene, vrm);
+    } else {
+      onModelLoaded(gltf.scene, null);
     }
-  );
+  }, undefined, (err) => {
+    loadingEl.style.display = 'none';
+    console.error('Model load error:', err);
+    setImportStatus('Failed to load — check the console for details.', 'err');
+  });
 }
+
 
 window.addEventListener('resize', () => {
   camera.aspect = stage.clientWidth / stage.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(stage.clientWidth, stage.clientHeight);
-  if (currentVrm) frameCamera(currentVrm);
+  if (modelGroup.children.length) frameCameraFromGroup();
 });
 
 async function refreshCharacterList(selectId) {
@@ -199,43 +263,58 @@ function setImportStatus(text, cls) {
   importStatus.className = cls || '';
 }
 
-async function handleZipFile(file) {
+const MODEL_EXTS = /\.(vrm|glb|gltf|fbx|obj)$/i;
+
+async function handleImportFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.zip')) {
-    setImportStatus('Please drop a .zip file containing a .vrm model.', 'err');
+  const name = file.name.toLowerCase();
+  const isZip = name.endsWith('.zip');
+  const isModel = MODEL_EXTS.test(name);
+
+  if (!isZip && !isModel) {
+    setImportStatus('Drop a .zip or a model file (.vrm, .glb, .gltf, .fbx, .obj)', 'err');
     return;
   }
+
+  if (isModel) {
+    setImportStatus(`Importing ${file.name}…`, 'busy');
+    const data = await file.arrayBuffer();
+    const result = await window.companionAPI?.importCharacter?.(file.name, data);
+    if (!result?.ok) { setImportStatus(`Import failed: ${result?.error || 'unknown'}`, 'err'); return; }
+    await refreshCharacterList(result.id);
+    await loadCharacterById(result.id);
+    setImportStatus(`Loaded "${result.label}".`, 'ok');
+    return;
+  }
+
   setImportStatus(`Reading ${file.name}…`, 'busy');
   try {
     const buffer = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(buffer);
     let entry = null;
     zip.forEach((relPath, zipEntry) => {
-      if (!entry && !zipEntry.dir && /\.vrm$/i.test(relPath)) entry = zipEntry;
+      if (!entry && !zipEntry.dir && MODEL_EXTS.test(relPath)) entry = zipEntry;
     });
     if (!entry) {
-      setImportStatus('No .vrm file found inside that zip.', 'err');
+      setImportStatus('No model file found inside that zip (.vrm, .glb, .fbx, .obj)', 'err');
       return;
     }
     setImportStatus('Importing character…', 'busy');
-    const vrmData = await entry.async('arraybuffer');
-    const name = entry.name.split('/').pop();
-    const result = await window.companionAPI?.importCharacter?.(name, vrmData);
-    if (!result?.ok) {
-      setImportStatus(`Import failed: ${result?.error || 'unknown error'}`, 'err');
-      return;
-    }
+    const modelData = await entry.async('arraybuffer');
+    const entryName = entry.name.split('/').pop();
+    const result = await window.companionAPI?.importCharacter?.(entryName, modelData);
+    if (!result?.ok) { setImportStatus(`Import failed: ${result?.error || 'unknown'}`, 'err'); return; }
     await refreshCharacterList(result.id);
     await loadCharacterById(result.id);
     setImportStatus(`Loaded "${result.label}".`, 'ok');
   } catch (err) {
     console.error(err);
-    setImportStatus('Could not read that zip — see console for details.', 'err');
+    setImportStatus('Could not read that file — see console for details.', 'err');
   }
 }
 
 dropZone.addEventListener('click', () => zipInput.click());
-zipInput.addEventListener('change', (e) => handleZipFile(e.target.files[0]));
+zipInput.addEventListener('change', (e) => handleImportFile(e.target.files[0]));
 ['dragenter', 'dragover'].forEach((evt) =>
   dropZone.addEventListener(evt, (e) => { e.preventDefault(); dropZone.classList.add('dragover'); })
 );
@@ -244,7 +323,7 @@ zipInput.addEventListener('change', (e) => handleZipFile(e.target.files[0]));
 );
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
-  handleZipFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+  handleImportFile(e.dataTransfer.files && e.dataTransfer.files[0]);
 });
 
 const dragHandle = $('dragHandle');
@@ -1664,14 +1743,16 @@ function animate() {
     const chest = currentVrm.humanoid?.getNormalizedBoneNode('chest');
     if (spine) { spine.rotation.x += leanX * 0.6; spine.rotation.z += leanZ * 0.6; }
     if (chest) { chest.rotation.x += leanX * 0.4; chest.rotation.z += leanZ * 0.4; }
+    updateEyeLookAt(dt);
+    updateBlinkAndExpression(t);
+    applyAmbientWind(t);
+  }
 
+  if (modelGroup.children.length) {
     const targetYaw = faceDir < 0 ? Math.PI : 0;
     if (behavior !== 'spin') {
       modelGroup.rotation.y += (targetYaw - modelGroup.rotation.y) * (1 - Math.exp(-8 * dt));
     }
-    updateEyeLookAt(dt);
-    updateBlinkAndExpression(t);
-    applyAmbientWind(t);
   }
 
   renderer.render(scene, camera);
